@@ -1,320 +1,82 @@
-import discord
-from discord import app_commands
-from discord.ext import commands
-import random
-import json
-import time
-import asyncio
-import os
-
-# --------------------------
-# Load & Save from index.json ONLY
-# --------------------------
-def load_index():
-    if os.path.exists("index.json"):
-        with open("index.json", "r", encoding="utf-8") as f:
-            return json.load(f)
-    # Fallback if file missing
-    return {
-        "bot": {},
-        "rates": {},
-        "colour_groups": [],
-        "stock": {},
-        "users": {},
-        "deposit_requests": [],
-        "pull_history": [],
-        "furni_deposits": []
+{
+  "bot": {
+    "token": "",
+    "habbo_name": "YOUR_HABBO_USERNAME",
+    "admin_role_id": 1457339777069092944
+  },
+  "rates": {
+    "cost_per_pull": 1,
+    "starting_tokens": 5,
+    "furni_per_token": 20,
+    "token_packages": {
+      "3": 1,
+      "15": 5,
+      "25": 10,
+      "50": 25
+    },
+    "base_rate": 3,
+    "min_deposit": 3
+  },
+  "colour_groups": [
+    {
+      "id": "blue",
+      "name": "🔵 Blue",
+      "chance": 50,
+      "credit_min": 1,
+      "credit_max": 1,
+      "token_min": 1,
+      "token_max": 1
+    },
+    {
+      "id": "purple",
+      "name": "🟣 Purple",
+      "chance": 25,
+      "credit_min": 2,
+      "credit_max": 5,
+      "token_min": 1,
+      "token_max": 2
+    },
+    {
+      "id": "green",
+      "name": "💚 Mint Green",
+      "chance": 15,
+      "credit_min": 5,
+      "credit_max": 20,
+      "token_min": 2,
+      "token_max": 7
+    },
+    {
+      "id": "lilac",
+      "name": "🟪 Lilac",
+      "chance": 8,
+      "credit_min": 20,
+      "credit_max": 50,
+      "token_min": 7,
+      "token_max": 17
+    },
+    {
+      "id": "golden",
+      "name": "✨ GOLDEN JACKPOT",
+      "chance": 2,
+      "credit_min": 50,
+      "credit_max": 150,
+      "token_min": 17,
+      "token_max": 50
     }
-
-def save_index(data):
-    with open("index.json", "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-
-# Load all data
-DATA = load_index()
-
-# Shortcuts for easy use
-BOT_TOKEN = DATA["bot"]["token"]
-YOUR_HABBO_NAME = DATA["bot"]["habbo_name"]
-ADMIN_ROLE_ID = DATA["bot"]["admin_role_id"]
-COST_PER_PULL = DATA["rates"]["cost_per_pull"]
-STARTING_TOKENS = DATA["rates"]["starting_tokens"]
-FURNI_PER_TOKEN = DATA["rates"]["furni_per_token"]
-TOKEN_PACKAGES = DATA["rates"]["token_packages"]
-BASE_RATE = DATA["rates"]["base_rate"]
-MIN_DEPOSIT = DATA["rates"]["min_deposit"]
-COLOUR_GROUPS = DATA["colour_groups"]
-STOCK = DATA["stock"]
-
-# --------------------------
-# Helper Functions
-# --------------------------
-def get_user(user_id):
-    user_id = str(user_id)
-    if user_id not in DATA["users"]:
-        DATA["users"][user_id] = {"balance": STARTING_TOKENS}
-        save_index(DATA)
-    return DATA["users"][user_id]
-
-def pick_colour_group():
-    total = sum(g["chance"] for g in COLOUR_GROUPS)
-    roll = random.uniform(0, total)
-    current = 0
-    for group in COLOUR_GROUPS:
-        current += group["chance"]
-        if roll <= current:
-            return group
-
-def get_random_item_from_group(colour_id):
-    items = STOCK.get(colour_id, [])
-    available = [item for item in items if item["stock"] > 0]
-    return random.choice(available) if available else None
-
-def get_furni_image(name):
-    slug = name.lower().replace(" ", "_").replace("'", "").replace("&", "and")
-    return f"https://images.habbo.com/dcr/hof_furni/{slug}_icon.png"
-
-# --------------------------
-# Bot Setup
-# --------------------------
-intents = discord.Intents.default()
-intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
-tree = bot.tree
-
-# --------------------------
-# Gumball Command
-# --------------------------
-@tree.command(name="gumball", description="🎟️ Pull the lever! Cost: 1 Token — win random furni!")
-async def gumball(interaction: discord.Interaction):
-    user = get_user(interaction.user.id)
-
-    if user["balance"] < COST_PER_PULL:
-        return await interaction.response.send_message(
-            f"❌ **Not enough tokens!**\nYou have: **{user['balance']}**\nNeed: **{COST_PER_PULL}**\nUse `/deposit` or `/depositfurni` to get more.",
-            ephemeral=True
-        )
-
-    user["balance"] -= COST_PER_PULL
-    save_index(DATA)
-
-    await interaction.response.send_message("🎪 **Pulling lever...** 🔄 Spinning the balls...")
-    msg = await interaction.original_response()
-
-    for _ in range(6):
-        await msg.edit(content=f"🎪 **Spinning...** {random.choice(['🔵','🟣','💚','🟪','✨'])}")
-        await asyncio.sleep(0.35)
-
-    group = pick_colour_group()
-    won_item = get_random_item_from_group(group["id"])
-
-    if not won_item:
-        user["balance"] += COST_PER_PULL
-        save_index(DATA)
-        return await msg.edit(content=f"😕 **No stock left in {group['name']}** — your token has been refunded.")
-
-    # Update stock
-    won_item["stock"] -= 1
-    save_index(DATA)
-
-    credit_value = random.randint(group["credit_min"], group["credit_max"])
-    tokens_won = random.randint(group["token_min"], group["token_max"])
-    user["balance"] += tokens_won
-    save_index(DATA)
-
-    # Log the win
-    DATA["pull_history"].append({
-        "user": str(interaction.user),
-        "colour": group["name"],
-        "item": won_item["name"],
-        "value": credit_value,
-        "tokens_won": tokens_won,
-        "net": tokens_won - COST_PER_PULL,
-        "time": time.strftime("%Y-%m-%d %H:%M:%S")
-    })
-    save_index(DATA)
-
-    # Win Embed
-    embed = discord.Embed(
-        title="🎉 CONGRATULATIONS! YOU WON!",
-        description=f"**{interaction.user.mention}**",
-        color={
-            "blue": 0x3498db,
-            "purple": 0x9b59b6,
-            "green": 0x2ecc71,
-            "lilac": 0xa884f7,
-            "golden": 0xFFD700
-        }[group["id"]]
-    )
-    embed.add_field(name="🎁 Prize", value=f"**{won_item['name']}**", inline=False)
-    embed.add_field(name="💸 Estimated Value", value=f"**{credit_value} Credits**", inline=True)
-    embed.add_field(name="🎟️ Tokens Added", value=f"**+{tokens_won}**", inline=True)
-    embed.add_field(name="📝 Collection", value="Please contact an admin to arrange collection.", inline=False)
-    embed.set_thumbnail(url=get_furni_image(won_item["name"]))
-    embed.set_footer(text=f"Cost: 1 Token | New Balance: {user['balance']} Tokens")
-
-    await msg.edit(content=None, embed=embed)
-
-# --------------------------
-# User Commands
-# --------------------------
-@tree.command(name="balance", description="💳 Check your token balance")
-async def balance(interaction: discord.Interaction):
-    user = get_user(interaction.user.id)
-    await interaction.response.send_message(f"💰 Your balance: **{user['balance']} Tokens**")
-
-@tree.command(name="deposit", description="🪙 Buy tokens with Habbo Credits")
-@app_commands.describe(habbo_name="Your Habbo username", credits_sent="Credits sent")
-async def deposit(interaction: discord.Interaction, habbo_name: str, credits_sent: int):
-    if credits_sent < MIN_DEPOSIT:
-        return await interaction.response.send_message(
-            f"❌ Minimum: {MIN_DEPOSIT}c\nPackages:\n3c = 1 Token\n15c = 5 Tokens\n25c = 10 Tokens\n50c = 25 Tokens", ephemeral=True
-        )
-    if any(r.get("user_id") == str(interaction.user.id) and r["status"] == "Pending" for r in DATA["deposit_requests"]):
-        return await interaction.response.send_message("⚠️ You already have a pending request.", ephemeral=True)
-
-    tokens = TOKEN_PACKAGES.get(str(credits_sent), credits_sent // BASE_RATE)
-    req = {
-        "id": len(DATA["deposit_requests"]) + 1,
-        "user_id": str(interaction.user.id),
-        "habbo_name": habbo_name,
-        "credits": credits_sent,
-        "tokens": tokens,
-        "time": time.ctime(),
-        "status": "Pending"
-    }
-    DATA["deposit_requests"].append(req)
-    save_index(DATA)
-    await interaction.response.send_message(f"✅ Request: {credits_sent}c → {tokens} Tokens\nSend to: `{YOUR_HABBO_NAME}`")
-
-@tree.command(name="depositfurni", description="📦 Trade in furni — 20 Furni = 1 Token")
-@app_commands.describe(habbo_name="Your Habbo username", amount="Number of furni")
-async def depositfurni(interaction: discord.Interaction, habbo_name: str, amount: int):
-    if amount < FURNI_PER_TOKEN:
-        return await interaction.response.send_message(f"❌ Minimum: {FURNI_PER_TOKEN} Furni = 1 Token", ephemeral=True)
-    tokens = amount // FURNI_PER_TOKEN
-    remainder = amount % FURNI_PER_TOKEN
-
-    if any(d.get("user_id") == str(interaction.user.id) and d["status"] == "Pending" for d in DATA["furni_deposits"]):
-        return await interaction.response.send_message("⚠️ Pending request already exists.", ephemeral=True)
-
-    deposit = {
-        "id": len(DATA["furni_deposits"]) + 1,
-        "user_id": str(interaction.user.id),
-        "discord": str(interaction.user),
-        "habbo": habbo_name,
-        "amount": amount,
-        "tokens": tokens,
-        "remainder": remainder,
-        "time": time.ctime(),
-        "status": "Pending"
-    }
-    DATA["furni_deposits"].append(deposit)
-    save_index(DATA)
-    await interaction.response.send_message(f"✅ Request submitted: {amount} Furni → {tokens} Tokens\nSend to: `{YOUR_HABBO_NAME}`")
-
-# --------------------------
-# Admin Commands
-# --------------------------
-@tree.command(name="addfurni", description="➕ Add furni to stock (Admin only)")
-@app_commands.checks.has_role(ADMIN_ROLE_ID)
-async def addfurni(interaction: discord.Interaction, colour: str, name: str, stock: int):
-    if colour not in STOCK:
-        return await interaction.response.send_message("❌ Use: blue/purple/green/lilac/golden", ephemeral=True)
-    existing = next((i for i in STOCK[colour] if i["name"].lower() == name.lower()), None)
-    if existing:
-        existing["stock"] += stock
-    else:
-        STOCK[colour].append({"name": name, "stock": stock})
-    save_index(DATA)
-    await interaction.response.send_message(f"✅ Added/updated: {name} ({stock}x) in {colour}")
-
-@tree.command(name="removefurni", description="➖ Remove furni (Admin only)")
-@app_commands.checks.has_role(ADMIN_ROLE_ID)
-async def removefurni(interaction: discord.Interaction, colour: str, name: str, amount: int):
-    if colour not in STOCK:
-        return await interaction.response.send_message("❌ Use: blue/purple/green/lilac/golden", ephemeral=True)
-    item = next((i for i in STOCK[colour] if i["name"].lower() == name.lower()), None)
-    if not item:
-        return await interaction.response.send_message("❌ Item not found", ephemeral=True)
-    if item["stock"] <= amount:
-        STOCK[colour].remove(item)
-    else:
-        item["stock"] -= amount
-    save_index(DATA)
-    await interaction.response.send_message(f"✅ Updated: {name} stock now {item.get('stock', 0)}")
-
-@tree.command(name="viewstock", description="📋 View all stock (Admin only)")
-@app_commands.checks.has_role(ADMIN_ROLE_ID)
-async def viewstock(interaction: discord.Interaction):
-    embed = discord.Embed(title="📦 Current Stock", color=0x9b59b6)
-    for group in COLOUR_GROUPS:
-        items = "\n".join([f"• {i['name']}: {i['stock']}x" for i in STOCK.get(group["id"], []) if i["stock"] > 0]) or "Empty"
-        embed.add_field(name=group["name"], value=items, inline=False)
-    await interaction.response.send_message(embed=embed)
-
-@tree.command(name="pending", description="👀 View pending credit deposits")
-@app_commands.checks.has_role(ADMIN_ROLE_ID)
-async def pending(interaction: discord.Interaction):
-    pending = [r for r in DATA["deposit_requests"] if r["status"] == "Pending"]
-    if not pending:
-        return await interaction.response.send_message("✅ No pending deposits.", ephemeral=True)
-    embed = discord.Embed(title="⏳ Pending Credit Deposits", color=0xf39c12)
-    for r in pending:
-        embed.add_field(name=f"#{r['id']}", value=f"User: {r['habbo_name']}\nCredits: {r['credits']} → Tokens: {r['tokens']}", inline=False)
-    await interaction.response.send_message(embed=embed)
-
-@tree.command(name="approve", description="✅ Approve credit deposit")
-@app_commands.checks.has_role(ADMIN_ROLE_ID)
-async def approve(interaction: discord.Interaction, request_id: int):
-    req = next((r for r in DATA["deposit_requests"] if r["id"] == request_id and r["status"] == "Pending"), None)
-    if not req:
-        return await interaction.response.send_message("❌ Request not found", ephemeral=True)
-    user = get_user(req["user_id"])
-    user["balance"] += req["tokens"]
-    req["status"] = "Approved"
-    save_index(DATA)
-    await interaction.response.send_message(f"✅ Added {req['tokens']} Tokens to {req['habbo_name']}")
-
-@tree.command(name="pendingfurni", description="📋 View pending furni deposits")
-@app_commands.checks.has_role(ADMIN_ROLE_ID)
-async def pendingfurni(interaction: discord.Interaction):
-    pending = [d for d in DATA["furni_deposits"] if d["status"] == "Pending"]
-    if not pending:
-        return await interaction.response.send_message("✅ No pending furni deposits.", ephemeral=True)
-    embed = discord.Embed(title="⏳ Pending Furni Deposits", color=0xf39c12)
-    for d in pending:
-        embed.add_field(name=f"#{d['id']}", value=f"User: {d['habbo']}\nFurni: {d['amount']} → Tokens: {d['tokens']}", inline=False)
-    await interaction.response.send_message(embed=embed)
-
-@tree.command(name="approvefurni", description="✅ Approve furni deposit")
-@app_commands.checks.has_role(ADMIN_ROLE_ID)
-async def approvefurni(interaction: discord.Interaction, deposit_id: int):
-    req = next((d for d in DATA["furni_deposits"] if d["id"] == deposit_id and d["status"] == "Pending"), None)
-    if not req:
-        return await interaction.response.send_message("❌ Request not found", ephemeral=True)
-    user = get_user(req["user_id"])
-    user["balance"] += req["tokens"]
-    req["status"] = "Approved"
-    save_index(DATA)
-    await interaction.response.send_message(f"✅ Added {req['tokens']} Tokens")
-
-@tree.command(name="pullhistory", description="📜 View win history")
-@app_commands.checks.has_role(ADMIN_ROLE_ID)
-async def pullhistory(interaction: discord.Interaction):
-    if not DATA["pull_history"]:
-        return await interaction.response.send_message("📭 No history yet", ephemeral=True)
-    embed = discord.Embed(title="📜 Recent Wins", color=0x9b59b6)
-    for entry in reversed(DATA["pull_history"][-10:]):
-        embed.add_field(name=entry["time"], value=f"{entry['user']} → {entry['colour']} | {entry['item']} | Net: {entry['net']}", inline=False)
-    await interaction.response.send_message(embed=embed)
-
-# --------------------------
-# Run Bot
-# --------------------------
-@bot.event
-async def on_ready():
-    await tree.sync()
-    print(f"✅ Bot online | Using index.json as main file")
-
-bot.run(BOT_TOKEN)
+  ],
+  "stock": {
+    "blue": [],
+    "purple": [],
+    "green": [],
+    "lilac": [],
+    "golden": []
+  },
+  "channels": {
+    "shop": null,
+    "wins": null
+  },
+  "users": {},
+  "deposit_requests": [],
+  "pull_history": [],
+  "furni_deposits": []
+}

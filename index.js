@@ -13,7 +13,7 @@ const path = require('path');
 const cron = require('node-cron');
 
 // ==============================================
-// CONFIG — USING YOUR EXACT IDs
+// CONFIG — YOUR EXACT IDs
 // ==============================================
 const CONFIG = {
   bot: {
@@ -26,7 +26,7 @@ const CONFIG = {
     mod_awareness: process.env.MOD_CHANNEL_ID,
     claims: process.env.CLAIMS_CHANNEL_ID
   },
-  room_link: "https://www.habbo.com/room/1234567", // Replace with your room link
+  room_link: "https://www.habbo.com/room/1234567",
   rates: {
     starting_tokens: 0,
     credit_per_token: 3,
@@ -55,15 +55,9 @@ const DATA_PATH = path.join(__dirname, 'data.json');
 
 let habboLinks = {};
 if (fs.existsSync(HABBO_LINKS_PATH)) {
-  try {
-    habboLinks = JSON.parse(fs.readFileSync(HABBO_LINKS_PATH, 'utf8'));
-  } catch {
-    habboLinks = {};
-    fs.writeFileSync(HABBO_LINKS_PATH, JSON.stringify(habboLinks, null, 2));
-  }
-} else {
-  fs.writeFileSync(HABBO_LINKS_PATH, JSON.stringify({}, null, 2));
-}
+  try { habboLinks = JSON.parse(fs.readFileSync(HABBO_LINKS_PATH, 'utf8')); }
+  catch { habboLinks = {}; fs.writeFileSync(HABBO_LINKS_PATH, JSON.stringify(habboLinks, null, 2)); }
+} else fs.writeFileSync(HABBO_LINKS_PATH, JSON.stringify({}, null, 2));
 
 let STOCK = { blue: [], purple: [], green: [], lilac: [], golden: [] };
 if (fs.existsSync(STOCK_PATH)) try { STOCK = JSON.parse(fs.readFileSync(STOCK_PATH, 'utf8')); } catch {}
@@ -109,7 +103,7 @@ async function autoLinkVerified(member) {
 }
 
 // ==============================================
-// BOT SETUP
+// BOT SETUP — FULLY VALIDATED COMMANDS
 // ==============================================
 const client = new Client({
   intents: [
@@ -123,41 +117,120 @@ const client = new Client({
 client.once("ready", async () => {
   console.log(`✅ Gumball Bot online as ${client.user.tag}`);
 
-  // Clear old commands
+  // Clear old commands first
   await client.application.commands.set([]);
   console.log("🧹 Cleared old commands");
 
-  // Register fresh commands
+  // ✅ ALL COMMANDS HAVE FULL DESCRIPTIONS — NO MORE ERRORS
   const commands = [
-    new SlashCommandBuilder().setName("balance").setDescription("Check your token balance and linked Habbo"),
-    new SlashCommandBuilder().setName("gumball").setDescription("Play the gumball machine — costs 1 Token"),
-    new SlashCommandBuilder().setName("howtoplay").setDescription("View exchange rates and rules"),
-    new SlashCommandBuilder().setName("showprizes").setDescription("See all available prizes and odds"),
-    new SlashCommandBuilder().setName("history").setDescription("View your activity history"),
-    new SlashCommandBuilder().setName("depositcoins").setDescription("Submit credit deposit")
-      .addIntegerOption(o => o.setName("amount").setDescription("Credits sent").setRequired(true)),
-    new SlashCommandBuilder().setName("depositfurni").setDescription("Submit furni deposit")
-      .addStringOption(o => o.setName("items").setDescription("List of items").setRequired(true)),
-    new SlashCommandBuilder().setName("addtokens").setDescription("STAFF: Add tokens")
-      .addUserOption(o => o.setName("user").setRequired(true))
-      .addIntegerOption(o => o.setName("amount").setRequired(true)),
-    new SlashCommandBuilder().setName("removetokens").setDescription("STAFF: Remove tokens")
-      .addUserOption(o => o.setName("user").setRequired(true))
-      .addIntegerOption(o => o.setName("amount").setRequired(true)),
-    new SlashCommandBuilder().setName("addstock").setDescription("STAFF: Add prizes")
-      .addStringOption(o => o.setName("group").setDescription("blue/purple/green/lilac/golden").setRequired(true))
-      .addStringOption(o => o.setName("name").setRequired(true))
-      .addIntegerOption(o => o.setName("amount").setRequired(true)),
-    new SlashCommandBuilder().setName("removestock").setDescription("STAFF: Remove prizes")
-      .addStringOption(o => o.setName("group").setRequired(true))
-      .addStringOption(o => o.setName("name").setRequired(true))
-      .addIntegerOption(o => o.setName("amount").setRequired(true))
+    new SlashCommandBuilder()
+      .setName("balance")
+      .setDescription("Check your token balance and linked Habbo account"),
+
+    new SlashCommandBuilder()
+      .setName("gumball")
+      .setDescription("Play the gumball machine — costs 1 Token per spin"),
+
+    new SlashCommandBuilder()
+      .setName("howtoplay")
+      .setDescription("View exchange rates, deposit rules and how to earn tokens"),
+
+    new SlashCommandBuilder()
+      .setName("showprizes")
+      .setDescription("See all available prizes, their values and chances"),
+
+    new SlashCommandBuilder()
+      .setName("history")
+      .setDescription("View your recent activity and transaction history"),
+
+    new SlashCommandBuilder()
+      .setName("depositcoins")
+      .setDescription("Submit a credit deposit to receive tokens")
+      .addIntegerOption(option =>
+        option.setName("amount")
+          .setDescription("Number of credits you are depositing")
+          .setRequired(true)
+      ),
+
+    new SlashCommandBuilder()
+      .setName("depositfurni")
+      .setDescription("Submit a furni deposit to receive tokens")
+      .addStringOption(option =>
+        option.setName("items")
+          .setDescription("List of furni items you are depositing")
+          .setRequired(true)
+      ),
+
+    new SlashCommandBuilder()
+      .setName("addtokens")
+      .setDescription("Staff only: Add tokens to a user")
+      .addUserOption(option =>
+        option.setName("user")
+          .setDescription("Select the user to receive tokens")
+          .setRequired(true)
+      )
+      .addIntegerOption(option =>
+        option.setName("amount")
+          .setDescription("Number of tokens to add")
+          .setRequired(true)
+      ),
+
+    new SlashCommandBuilder()
+      .setName("removetokens")
+      .setDescription("Staff only: Remove tokens from a user")
+      .addUserOption(option =>
+        option.setName("user")
+          .setDescription("Select the user to remove tokens from")
+          .setRequired(true)
+      )
+      .addIntegerOption(option =>
+        option.setName("amount")
+          .setDescription("Number of tokens to remove")
+          .setRequired(true)
+      ),
+
+    new SlashCommandBuilder()
+      .setName("addstock")
+      .setDescription("Staff only: Add prizes to stock")
+      .addStringOption(option =>
+        option.setName("group")
+          .setDescription("Rarity group: blue, purple, green, lilac or golden")
+          .setRequired(true)
+      )
+      .addStringOption(option =>
+        option.setName("name")
+          .setDescription("Name of the furni item")
+          .setRequired(true)
+      )
+      .addIntegerOption(option =>
+        option.setName("amount")
+          .setDescription("Quantity to add to stock")
+          .setRequired(true)
+      ),
+
+    new SlashCommandBuilder()
+      .setName("removestock")
+      .setDescription("Staff only: Remove prizes from stock")
+      .addStringOption(option =>
+        option.setName("group")
+          .setDescription("Rarity group: blue, purple, green, lilac or golden")
+          .setRequired(true)
+      )
+      .addStringOption(option =>
+        option.setName("name")
+          .setDescription("Name of the furni item")
+          .setRequired(true)
+      )
+      .addIntegerOption(option =>
+        option.setName("amount")
+          .setDescription("Quantity to remove from stock")
+          .setRequired(true)
+      )
   ];
 
   await client.application.commands.set(commands);
-  console.log("✅ All commands registered successfully");
+  console.log("✅ All commands registered successfully — no validation errors");
 
-  // Weekly reset
   cron.schedule("0 18 * * 0", () => {
     DATA.weeklyLeaderboard = { weekStart: new Date().toISOString(), users: {} };
     saveData();
@@ -165,7 +238,7 @@ client.once("ready", async () => {
 });
 
 // ==============================================
-// COMMAND HANDLING
+// COMMAND & BUTTON HANDLING
 // ==============================================
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand() && !interaction.isButton()) return;

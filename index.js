@@ -13,20 +13,21 @@ const path = require('path');
 const cron = require('node-cron');
 
 // ==============================================
-// CONFIGURATION
+// CONFIGURATION — MATCH THESE TO YOUR SETUP
 // ==============================================
 const CONFIG = {
   bot: {
     token: process.env.BOT_TOKEN,
     admin_role_id: process.env.ADMIN_ROLE_ID,
     support_role_id: process.env.SUPPORT_ROLE_ID,
-    owner_id: process.env.OWNER_ID
+    verified_role_id: process.env.VERIFIED_ROLE_ID, // ← MUST MATCH YOUR VERIFY BOT
+    guild_id: process.env.GUILD_ID
   },
   channels: {
     mod_awareness: process.env.MOD_CHANNEL_ID,
     claims: process.env.CLAIMS_CHANNEL_ID
   },
-  room_link: "https://www.habbo.com/room/1234567", // Replace with your real room ID
+  room_link: "https://www.habbo.com/room/1234567", // Replace with your real room
 
   rates: {
     starting_tokens: 0,
@@ -49,7 +50,7 @@ const CONFIG = {
 };
 
 // ==============================================
-// DATA LOADING
+// DATA FILES — SAME LOCATION AS VERIFY BOT
 // ==============================================
 const HABBO_LINKS_PATH = path.join(__dirname, 'habboLinks.json');
 const STOCK_PATH = path.join(__dirname, 'stock.json');
@@ -59,13 +60,14 @@ let habboLinks = {};
 if (fs.existsSync(HABBO_LINKS_PATH)) {
   try {
     habboLinks = JSON.parse(fs.readFileSync(HABBO_LINKS_PATH, 'utf8'));
-    console.log(`✅ Loaded ${Object.keys(habboLinks).length} verified Habbo accounts`);
+    console.log(`✅ Loaded ${Object.keys(habboLinks).length} Habbo links from habboLinks.json`);
   } catch (err) {
     console.warn("⚠️ habboLinks.json invalid, starting empty:", err.message);
     habboLinks = {};
+    fs.writeFileSync(HABBO_LINKS_PATH, JSON.stringify({}, null, 2));
   }
 } else {
-  console.warn("⚠️ habboLinks.json not found — creating empty file");
+  console.warn("⚠️ habboLinks.json not found — creating new file");
   fs.writeFileSync(HABBO_LINKS_PATH, JSON.stringify({}, null, 2));
 }
 
@@ -92,6 +94,7 @@ if (fs.existsSync(DATA_PATH)) {
 
 function saveStock() { fs.writeFileSync(STOCK_PATH, JSON.stringify(STOCK, null, 2)); }
 function saveData() { fs.writeFileSync(DATA_PATH, JSON.stringify(DATA, null, 2)); }
+function saveHabboLinks() { fs.writeFileSync(HABBO_LINKS_PATH, JSON.stringify(habboLinks, null, 2)); }
 
 // ==============================================
 // HELPER FUNCTIONS
@@ -100,20 +103,17 @@ function getHabboName(discordId) {
   return habboLinks[discordId.toString()] || null;
 }
 
-// ✅ Habbo avatar image
 function getAvatar(habboName) {
   if (!habboName) return "https://www.habbo.com/habbo-imaging/avatarimage?user=Habbo&headonly=1&size=s";
   const safe = encodeURIComponent(habboName.trim());
   return `https://www.habbo.com/habbo-imaging/avatarimage?user=${safe}&direction=2&headonly=1&size=s`;
 }
 
-// ✅ Furni image from official Habbo CDN
 function getFurniImage(name) {
   const safe = name.toLowerCase().replace(/ /g, "_").replace(/'/g, "").replace(/&/g, "and");
   return `https://images.habbo.com/dcr/hof_furni/${safe}_icon.png`;
 }
 
-// ✅ Average credit value per rarity group
 function getAverageValue(groupName) {
   const g = CONFIG.rarity_groups.find(r => r.name === groupName);
   return g ? Math.round((g.credit_min + g.credit_max) / 2) : 0;
@@ -135,7 +135,6 @@ function addToHistory(userId, entry) {
   saveData();
 }
 
-// ✅ Track total credit value of wins for leaderboard
 function addToWeeklyStats(userId, type, val = 0) {
   const id = userId.toString();
   if (!DATA.weeklyLeaderboard.users[id]) {
@@ -149,14 +148,13 @@ function addToWeeklyStats(userId, type, val = 0) {
   saveData();
 }
 
-// ✅ Leaderboard sorted by total credits won
 async function postWeeklyLeaderboard(isFinal = false) {
   const ch = await client.channels.fetch(CONFIG.channels.mod_awareness).catch(() => null);
   if (!ch) return;
   const sorted = Object.entries(DATA.weeklyLeaderboard.users)
     .sort((a, b) => b[1].totalCreditsWon - a[1].totalCreditsWon)
     .slice(0, 10);
-  const list = sorted.map(([id, d], i) => 
+  const list = sorted.map(([id, d], i) =>
     `**#${i+1}** • ${getHabboName(id) || "Unlinked"}\n🪙 Tokens: ${d.tokensEarned} | 🎉 Wins: ${d.wins} | 💎 **Total: ${d.totalCreditsWon} Credits**`
   ).join("\n\n") || "No activity recorded this week yet.";
   await ch.send({ embeds: [new EmbedBuilder()
@@ -168,44 +166,81 @@ async function postWeeklyLeaderboard(isFinal = false) {
 }
 
 // ==============================================
+// AUTO‑LINK ALL VERIFIED USERS (matches your verify bot)
+// ==============================================
+async function autoLinkVerifiedUsers() {
+  console.log('🔍 Auto‑linking existing verified users...');
+  const guild = client.guilds.cache.get(CONFIG.bot.guild_id);
+  if (!guild) return console.log("⚠️ Guild not found — check GUILD_ID");
+
+  const verifiedRole = await guild.roles.fetch(CONFIG.bot.verified_role_id).catch(() => null);
+  if (!verifiedRole) return console.log("⚠️ Verified role not found — check VERIFIED_ROLE_ID");
+
+  const members = await guild.members.fetch({ force: true });
+  let added = 0;
+
+  for (const [memberId, member] of members) {
+    if (member.roles.cache.has(verifiedRole.id) && !habboLinks[memberId]) {
+      const habboName = member.nickname?.trim() || member.user.username.trim();
+      if (habboName && /^[A-Za-z0-9 _-]{3,30}$/.test(habboName)) {
+        habboLinks[memberId] = habboName;
+        added++;
+      }
+    }
+  }
+
+  if (added > 0) {
+    saveHabboLinks();
+    console.log(`✅ Auto‑linked ${added} verified users! Total linked: ${Object.keys(habboLinks).length}`);
+  } else {
+    console.log(`✅ All verified users already linked — total: ${Object.keys(habboLinks).length}`);
+  }
+}
+
+// ==============================================
 // BOT SETUP
 // ==============================================
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
 client.once("ready", async () => {
   console.log(`✅ Gumball Bot online as ${client.user.tag}`);
 
+  // Run auto‑link on startup
+  await autoLinkVerifiedUsers();
+
+  // Register all commands with proper descriptions
   const commands = [
-    new SlashCommandBuilder().setName("balance").setDescription("Check your token balance and linked Habbo"),
-    new SlashCommandBuilder().setName("gumball").setDescription("Play — costs 1 Token per spin"),
-    new SlashCommandBuilder().setName("howtoplay").setDescription("View rates and how to get tokens"),
-    new SlashCommandBuilder().setName("showprizes").setDescription("See all prizes, values and odds"),
-    new SlashCommandBuilder().setName("history").setDescription("View your activity history"),
-    new SlashCommandBuilder().setName("depositcoins").setDescription("Submit credit deposit")
-      .addIntegerOption(o => o.setName("amount").setDescription("Credits sent").setRequired(true)),
-    new SlashCommandBuilder().setName("depositfurni").setDescription("Submit furni deposit")
-      .addStringOption(o => o.setName("items").setDescription("List of items sent").setRequired(true)),
-    new SlashCommandBuilder().setName("addtokens").setDescription("Staff: Add tokens")
+    new SlashCommandBuilder().setName("balance").setDescription("Check your token balance and linked Habbo account"),
+    new SlashCommandBuilder().setName("gumball").setDescription("Play the gumball machine — costs 1 Token per spin"),
+    new SlashCommandBuilder().setName("howtoplay").setDescription("View exchange rates, deposit info and how to play"),
+    new SlashCommandBuilder().setName("showprizes").setDescription("See all available prizes, their values and chances"),
+    new SlashCommandBuilder().setName("history").setDescription("View your recent activity and transaction history"),
+    new SlashCommandBuilder().setName("depositcoins").setDescription("Submit a credit deposit to receive tokens")
+      .addIntegerOption(o => o.setName("amount").setDescription("Number of credits sent").setRequired(true)),
+    new SlashCommandBuilder().setName("depositfurni").setDescription("Submit a furni deposit to receive tokens")
+      .addStringOption(o => o.setName("items").setDescription("List of items you deposited").setRequired(true)),
+    new SlashCommandBuilder().setName("addtokens").setDescription("Staff only: Add tokens to a user")
       .addUserOption(o => o.setName("user").setDescription("Target user").setRequired(true))
       .addIntegerOption(o => o.setName("amount").setDescription("Number of tokens").setRequired(true)),
-    new SlashCommandBuilder().setName("removetokens").setDescription("Staff: Remove tokens")
+    new SlashCommandBuilder().setName("removetokens").setDescription("Staff only: Remove tokens from a user")
       .addUserOption(o => o.setName("user").setDescription("Target user").setRequired(true))
       .addIntegerOption(o => o.setName("amount").setDescription("Number of tokens").setRequired(true)),
-    new SlashCommandBuilder().setName("addstock").setDescription("Staff: Add furni to stock")
-      .addStringOption(o => o.setName("group").setDescription("blue/purple/green/lilac/golden").setRequired(true))
-      .addStringOption(o => o.setName("name").setDescription("Furni name").setRequired(true))
-      .addIntegerOption(o => o.setName("amount").setDescription("Quantity").setRequired(true)),
-    new SlashCommandBuilder().setName("removestock").setDescription("Staff: Remove furni from stock")
-      .addStringOption(o => o.setName("group").setDescription("blue/purple/green/lilac/golden").setRequired(true))
-      .addStringOption(o => o.setName("name").setDescription("Furni name").setRequired(true))
-      .addIntegerOption(o => o.setName("amount").setDescription("Quantity").setRequired(true))
+    new SlashCommandBuilder().setName("addstock").setDescription("Staff only: Add prizes to stock")
+      .addStringOption(o => o.setName("group").setDescription("blue / purple / green / lilac / golden").setRequired(true))
+      .addStringOption(o => o.setName("name").setDescription("Name of the furni").setRequired(true))
+      .addIntegerOption(o => o.setName("amount").setDescription("Quantity to add").setRequired(true)),
+    new SlashCommandBuilder().setName("removestock").setDescription("Staff only: Remove prizes from stock")
+      .addStringOption(o => o.setName("group").setDescription("blue / purple / green / lilac / golden").setRequired(true))
+      .addStringOption(o => o.setName("name").setDescription("Name of the furni").setRequired(true))
+      .addIntegerOption(o => o.setName("amount").setDescription("Quantity to remove").setRequired(true))
   ];
 
   await client.application.commands.set(commands);
   console.log("✅ All commands registered successfully");
 
+  // Weekly leaderboard schedule
   cron.schedule("0 18 * * *", () => postWeeklyLeaderboard(false));
   cron.schedule("0 18 * * 0", () => { postWeeklyLeaderboard(true); DATA.weeklyLeaderboard = { weekStart: new Date().toISOString(), users: {} }; saveData(); });
 });
@@ -252,7 +287,15 @@ client.on("interactionCreate", async interaction => {
 
       case "depositcoins": {
         const habbo = getHabboName(interaction.user.id);
-        if (!habbo) return interaction.reply({ content: "❌ Verify first!", ephemeral: true });
+        if (!habbo) {
+          if (interaction.member.roles.cache.has(CONFIG.bot.verified_role_id)) {
+            const habboName = interaction.member.nickname?.trim() || interaction.user.username.trim();
+            habboLinks[interaction.user.id] = habboName;
+            saveHabboLinks();
+            return interaction.reply({ content: `✅ Auto‑linked your account: **${habboName}** — run the command again!`, ephemeral: true });
+          }
+          return interaction.reply({ content: "❌ You must be verified first!", ephemeral: true });
+        }
         const amount = interaction.options.getInteger("amount");
         const bulk = CONFIG.rates.bulk_packages.find(p => p.cost === amount);
         const tokens = bulk ? bulk.tokens : Math.floor(amount / CONFIG.rates.credit_per_token);
@@ -273,12 +316,20 @@ client.on("interactionCreate", async interaction => {
 
         const ch = await client.channels.fetch(CONFIG.channels.mod_awareness).catch(() => null);
         if (ch) ch.send({ embeds: [embed], components: [row] });
-        return interaction.reply({ content: "✅ Deposit submitted!", ephemeral: true });
+        return interaction.reply({ content: "✅ Deposit submitted! Awaiting approval.", ephemeral: true });
       }
 
       case "depositfurni": {
         const habbo = getHabboName(interaction.user.id);
-        if (!habbo) return interaction.reply({ content: "❌ Verify first!", ephemeral: true });
+        if (!habbo) {
+          if (interaction.member.roles.cache.has(CONFIG.bot.verified_role_id)) {
+            const habboName = interaction.member.nickname?.trim() || interaction.user.username.trim();
+            habboLinks[interaction.user.id] = habboName;
+            saveHabboLinks();
+            return interaction.reply({ content: `✅ Auto‑linked your account: **${habboName}** — run the command again!`, ephemeral: true });
+          }
+          return interaction.reply({ content: "❌ You must be verified first!", ephemeral: true });
+        }
         const items = interaction.options.getString("items");
         const depId = Date.now();
         DATA.deposit_requests[depId] = { type: "furni", userId: interaction.user.id, habbo, items, tokens: null, status: "pending" };
@@ -297,21 +348,29 @@ client.on("interactionCreate", async interaction => {
 
         const ch = await client.channels.fetch(CONFIG.channels.mod_awareness).catch(() => null);
         if (ch) ch.send({ embeds: [embed], components: [row] });
-        return interaction.reply({ content: "✅ Furni deposit submitted!", ephemeral: true });
+        return interaction.reply({ content: "✅ Furni deposit submitted! Awaiting approval.", ephemeral: true });
       }
 
       case "gumball": {
         const user = ensureUser(interaction.user.id);
         const habbo = getHabboName(interaction.user.id);
-        if (!habbo) return interaction.reply({ content: "❌ Verify first!", ephemeral: true });
-        if (user.balance < 1) return interaction.reply({ content: "❌ Need at least 1 Token!", ephemeral: true });
+        if (!habbo) {
+          if (interaction.member.roles.cache.has(CONFIG.bot.verified_role_id)) {
+            const habboName = interaction.member.nickname?.trim() || interaction.user.username.trim();
+            habboLinks[interaction.user.id] = habboName;
+            saveHabboLinks();
+            return interaction.reply({ content: `✅ Auto‑linked your account: **${habboName}** — spin again!`, ephemeral: true });
+          }
+          return interaction.reply({ content: "❌ You must be verified first!", ephemeral: true });
+        }
+        if (user.balance < 1) return interaction.reply({ content: "❌ You need at least 1 Token to play!", ephemeral: true });
 
         user.balance -= 1;
         saveData();
 
         const group = CONFIG.rarity_groups.sort((a, b) => b.chance - a.chance).find(g => Math.random() * 100 < g.chance) || CONFIG.rarity_groups[4];
         const items = STOCK[group.id]?.filter(i => i.stock > 0) || [];
-        if (!items.length) { user.balance += 1; saveData(); return interaction.reply({ content: "😕 No stock — token refunded", ephemeral: true }); }
+        if (!items.length) { user.balance += 1; saveData(); return interaction.reply({ content: "😕 No prizes available — token refunded.", ephemeral: true }); }
 
         const prize = items[Math.floor(Math.random() * items.length)];
         prize.stock--;
@@ -326,7 +385,6 @@ client.on("interactionCreate", async interaction => {
         addToWeeklyStats(interaction.user.id, "tokens", wonTokens);
         addToWeeklyStats(interaction.user.id, "win", avgVal);
 
-        // ✅ Win embed with Habbo avatar and furni image
         const winEmbed = new EmbedBuilder()
           .setTitle("🎉 YOU WON!")
           .setColor(group.color)
@@ -334,14 +392,13 @@ client.on("interactionCreate", async interaction => {
           .setAuthor({ name: habbo, iconURL: getAvatar(habbo) })
           .addFields(
             { name: "Prize", value: `**${prize.name}**`, inline: false },
-            { name: "Value", value: `~${avgVal} Credits`, inline: true },
+            { name: "Estimated Value", value: `~${avgVal} Credits`, inline: true },
             { name: "Tokens Won", value: `+${wonTokens}`, inline: true },
             { name: "New Balance", value: `${user.balance}`, inline: true }
           );
 
         await interaction.reply({ embeds: [winEmbed] });
 
-        // ✅ Claim message sent to claims channel
         const claimId = Date.now();
         DATA.pending_claims[claimId] = { userId: interaction.user.id, habbo, item: prize.name, value: `${avgVal}c`, group: group.name, status: "Pending" };
         saveData();
@@ -406,7 +463,7 @@ client.on("interactionCreate", async interaction => {
         const user = ensureUser(interaction.user.id);
         const habbo = getHabboName(interaction.user.id);
         return interaction.reply({ embeds: [new EmbedBuilder()
-          .setTitle("📜 Your History")
+          .setTitle("📜 Your Activity History")
           .setThumbnail(getAvatar(habbo))
           .setDescription(user.history.length ? user.history.map(e => `• ${new Date(e.timestamp).toLocaleString()} — ${e.type}: ${e.detail}`).join("\n") : "No activity yet")
         ], ephemeral: true });
@@ -417,11 +474,11 @@ client.on("interactionCreate", async interaction => {
         const g = interaction.options.getString("group").toLowerCase();
         const name = interaction.options.getString("name");
         const amt = interaction.options.getInteger("amount");
-        if (!STOCK[g]) return interaction.reply({ content: "❌ Invalid group", ephemeral: true });
+        if (!STOCK.hasOwnProperty(g)) return interaction.reply({ content: "❌ Invalid group — use blue/purple/green/lilac/golden", ephemeral: true });
         const existing = STOCK[g].find(i => i.name.toLowerCase() === name.toLowerCase());
         existing ? existing.stock += amt : STOCK[g].push({ name, stock: amt });
         saveStock();
-        return interaction.reply({ content: `✅ Added ${name} × ${amt}`, ephemeral: true });
+        return interaction.reply({ content: `✅ Added **${name} × ${amt}** to ${g} stock`, ephemeral: true });
       }
 
       case "removestock": {
@@ -429,32 +486,33 @@ client.on("interactionCreate", async interaction => {
         const g = interaction.options.getString("group").toLowerCase();
         const name = interaction.options.getString("name");
         const amt = interaction.options.getInteger("amount");
-        const idx = STOCK[g]?.findIndex(i => i.name.toLowerCase() === name.toLowerCase());
+        if (!STOCK.hasOwnProperty(g)) return interaction.reply({ content: "❌ Invalid group", ephemeral: true });
+        const idx = STOCK[g].findIndex(i => i.name.toLowerCase() === name.toLowerCase());
         if (idx === -1) return interaction.reply({ content: "❌ Item not found", ephemeral: true });
         STOCK[g][idx].stock -= amt;
         if (STOCK[g][idx].stock <= 0) STOCK[g].splice(idx, 1);
         saveStock();
-        return interaction.reply({ content: `✅ Stock updated`, ephemeral: true });
+        return interaction.reply({ content: `✅ Updated stock for **${name}**`, ephemeral: true });
       }
     }
   }
 
-  // ✅ Button handlers
+  // BUTTON HANDLERS
   if (interaction.isButton()) {
     const [action, type, idStr] = interaction.customId.split("_");
     const id = parseInt(idStr);
 
     if (action === "dep") {
       const dep = DATA.deposit_requests?.[id];
-      if (!dep || !isStaff) return interaction.reply({ content: "❌ Invalid", ephemeral: true });
+      if (!dep || !isStaff) return interaction.reply({ content: "❌ Invalid action", ephemeral: true });
       const user = ensureUser(dep.userId);
       const member = await client.users.fetch(dep.userId).catch(() => null);
 
       if (type === "approve") {
         if (dep.type === "furni") {
-          await interaction.reply({ content: "Enter token amount:", ephemeral: true });
+          await interaction.reply({ content: "Enter total tokens to award:", ephemeral: true });
           try {
-            const res = await interaction.channel.awaitMessages({ filter: m => m.author.id === interaction.user.id && !isNaN(+m.content), max: 1, time: 30000 });
+            const res = await interaction.channel.awaitMessages({ filter: m => m.author.id === interaction.user.id && !isNaN(+m.content), max: 1, time: 30000, errors: ["time"] });
             dep.tokens = parseInt(res.first().content);
           } catch { return interaction.followUp({ content: "⏱️ Timed out", ephemeral: true }); }
         }
@@ -464,7 +522,7 @@ client.on("interactionCreate", async interaction => {
         saveData();
         member?.send({ content: `✅ Deposit approved! +${dep.tokens} Tokens` }).catch(() => {});
         await interaction.update({ embeds: [EmbedBuilder.from(interaction.message.embeds[0]).setColor("#2ecc71").setDescription(`✅ Approved by ${interaction.user.tag}`)], components: [] });
-        return interaction.followUp({ content: "✅ Added tokens", ephemeral: true });
+        return interaction.followUp({ content: "✅ Tokens added", ephemeral: true });
       }
 
       if (type === "deny") {
@@ -472,7 +530,7 @@ client.on("interactionCreate", async interaction => {
         saveData();
         member?.send({ content: "❌ Deposit denied" }).catch(() => {});
         await interaction.update({ embeds: [EmbedBuilder.from(interaction.message.embeds[0]).setColor("#e74c3c").setDescription(`❌ Denied by ${interaction.user.tag}`)], components: [] });
-        return interaction.followUp({ content: "✅ Denied", ephemeral: true });
+        return interaction.followUp({ content: "✅ Deposit marked as denied", ephemeral: true });
       }
     }
 
@@ -481,7 +539,7 @@ client.on("interactionCreate", async interaction => {
       if (!claim) return interaction.reply({ content: "❌ Claim not found", ephemeral: true });
 
       if (action === "claimreq") {
-        if (interaction.user.id !== claim.userId) return interaction.reply({ content: "❌ Only winner can request", ephemeral: true });
+        if (interaction.user.id !== claim.userId) return interaction.reply({ content: "❌ Only the winner can request this", ephemeral: true });
         claim.status = "Requested";
         saveData();
         return interaction.reply({ content: "✅ Claim sent to staff", ephemeral: true });

@@ -442,4 +442,5 @@ client.on('interactionCreate', async interaction => {
   }
 });
 
-client.login(CONFIG.bot.token);
+// Use token from Koyeb environment variable first, fall back to config (only for local testing)
+client.login(process.env.BOT_TOKEN || CONFIG.bot.token);

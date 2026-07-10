@@ -103,7 +103,7 @@ async function autoLinkVerified(member) {
 }
 
 // ==============================================
-// BOT SETUP — FULLY VALIDATED COMMANDS
+// BOT SETUP — GUILD‑ONLY COMMANDS (INSTANT)
 // ==============================================
 const client = new Client({
   intents: [
@@ -117,119 +117,37 @@ const client = new Client({
 client.once("ready", async () => {
   console.log(`✅ Gumball Bot online as ${client.user.tag}`);
 
-  // Clear old commands first
-  await client.application.commands.set([]);
-  console.log("🧹 Cleared old commands");
+  const guild = client.guilds.cache.get(CONFIG.bot.guild_id);
+  if (!guild) return console.error("❌ Could not find your server! Check GUILD_ID.");
 
-  // ✅ ALL COMMANDS HAVE FULL DESCRIPTIONS — NO MORE ERRORS
   const commands = [
-    new SlashCommandBuilder()
-      .setName("balance")
-      .setDescription("Check your token balance and linked Habbo account"),
-
-    new SlashCommandBuilder()
-      .setName("gumball")
-      .setDescription("Play the gumball machine — costs 1 Token per spin"),
-
-    new SlashCommandBuilder()
-      .setName("howtoplay")
-      .setDescription("View exchange rates, deposit rules and how to earn tokens"),
-
-    new SlashCommandBuilder()
-      .setName("showprizes")
-      .setDescription("See all available prizes, their values and chances"),
-
-    new SlashCommandBuilder()
-      .setName("history")
-      .setDescription("View your recent activity and transaction history"),
-
-    new SlashCommandBuilder()
-      .setName("depositcoins")
-      .setDescription("Submit a credit deposit to receive tokens")
-      .addIntegerOption(option =>
-        option.setName("amount")
-          .setDescription("Number of credits you are depositing")
-          .setRequired(true)
-      ),
-
-    new SlashCommandBuilder()
-      .setName("depositfurni")
-      .setDescription("Submit a furni deposit to receive tokens")
-      .addStringOption(option =>
-        option.setName("items")
-          .setDescription("List of furni items you are depositing")
-          .setRequired(true)
-      ),
-
-    new SlashCommandBuilder()
-      .setName("addtokens")
-      .setDescription("Staff only: Add tokens to a user")
-      .addUserOption(option =>
-        option.setName("user")
-          .setDescription("Select the user to receive tokens")
-          .setRequired(true)
-      )
-      .addIntegerOption(option =>
-        option.setName("amount")
-          .setDescription("Number of tokens to add")
-          .setRequired(true)
-      ),
-
-    new SlashCommandBuilder()
-      .setName("removetokens")
-      .setDescription("Staff only: Remove tokens from a user")
-      .addUserOption(option =>
-        option.setName("user")
-          .setDescription("Select the user to remove tokens from")
-          .setRequired(true)
-      )
-      .addIntegerOption(option =>
-        option.setName("amount")
-          .setDescription("Number of tokens to remove")
-          .setRequired(true)
-      ),
-
-    new SlashCommandBuilder()
-      .setName("addstock")
-      .setDescription("Staff only: Add prizes to stock")
-      .addStringOption(option =>
-        option.setName("group")
-          .setDescription("Rarity group: blue, purple, green, lilac or golden")
-          .setRequired(true)
-      )
-      .addStringOption(option =>
-        option.setName("name")
-          .setDescription("Name of the furni item")
-          .setRequired(true)
-      )
-      .addIntegerOption(option =>
-        option.setName("amount")
-          .setDescription("Quantity to add to stock")
-          .setRequired(true)
-      ),
-
-    new SlashCommandBuilder()
-      .setName("removestock")
-      .setDescription("Staff only: Remove prizes from stock")
-      .addStringOption(option =>
-        option.setName("group")
-          .setDescription("Rarity group: blue, purple, green, lilac or golden")
-          .setRequired(true)
-      )
-      .addStringOption(option =>
-        option.setName("name")
-          .setDescription("Name of the furni item")
-          .setRequired(true)
-      )
-      .addIntegerOption(option =>
-        option.setName("amount")
-          .setDescription("Quantity to remove from stock")
-          .setRequired(true)
-      )
+    new SlashCommandBuilder().setName("balance").setDescription("Check your token balance and linked Habbo account"),
+    new SlashCommandBuilder().setName("gumball").setDescription("Play the gumball machine — costs 1 Token per spin"),
+    new SlashCommandBuilder().setName("howtoplay").setDescription("View exchange rates, deposit rules and how to earn tokens"),
+    new SlashCommandBuilder().setName("showprizes").setDescription("See all available prizes, their values and chances"),
+    new SlashCommandBuilder().setName("history").setDescription("View your recent activity and transaction history"),
+    new SlashCommandBuilder().setName("depositcoins").setDescription("Submit a credit deposit to receive tokens")
+      .addIntegerOption(o => o.setName("amount").setDescription("Number of credits you are depositing").setRequired(true)),
+    new SlashCommandBuilder().setName("depositfurni").setDescription("Submit a furni deposit to receive tokens")
+      .addStringOption(o => o.setName("items").setDescription("List of furni items you are depositing").setRequired(true)),
+    new SlashCommandBuilder().setName("addtokens").setDescription("Staff only: Add tokens to a user")
+      .addUserOption(o => o.setName("user").setDescription("Select the user to receive tokens").setRequired(true))
+      .addIntegerOption(o => o.setName("amount").setDescription("Number of tokens to add").setRequired(true)),
+    new SlashCommandBuilder().setName("removetokens").setDescription("Staff only: Remove tokens from a user")
+      .addUserOption(o => o.setName("user").setDescription("Select the user to remove tokens from").setRequired(true))
+      .addIntegerOption(o => o.setName("amount").setDescription("Number of tokens to remove").setRequired(true)),
+    new SlashCommandBuilder().setName("addstock").setDescription("Staff only: Add prizes to stock")
+      .addStringOption(o => o.setName("group").setDescription("Rarity group: blue, purple, green, lilac or golden").setRequired(true))
+      .addStringOption(o => o.setName("name").setDescription("Name of the furni item").setRequired(true))
+      .addIntegerOption(o => o.setName("amount").setDescription("Quantity to add to stock").setRequired(true)),
+    new SlashCommandBuilder().setName("removestock").setDescription("Staff only: Remove prizes from stock")
+      .addStringOption(o => o.setName("group").setDescription("Rarity group: blue, purple, green, lilac or golden").setRequired(true))
+      .addStringOption(o => o.setName("name").setDescription("Name of the furni item").setRequired(true))
+      .addIntegerOption(o => o.setName("amount").setDescription("Quantity to remove from stock").setRequired(true))
   ];
 
-  await client.application.commands.set(commands);
-  console.log("✅ All commands registered successfully — no validation errors");
+  await guild.commands.set(commands);
+  console.log("✅ Commands registered DIRECTLY to your server — ready instantly!");
 
   cron.schedule("0 18 * * 0", () => {
     DATA.weeklyLeaderboard = { weekStart: new Date().toISOString(), users: {} };

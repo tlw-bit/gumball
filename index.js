@@ -207,10 +207,14 @@ const client = new Client({
 client.once("ready", async () => {
   console.log(`✅ Gumball Bot online as ${client.user.tag}`);
 
-  // Run auto‑link on startup
+  // Run auto‑link
   await autoLinkVerifiedUsers();
 
-  // Register all commands with proper descriptions
+  // Clear old commands first
+  await client.application.commands.set([]);
+  console.log("🧹 Cleared old commands");
+
+  // Register fresh commands
   const commands = [
     new SlashCommandBuilder().setName("balance").setDescription("Check your token balance and linked Habbo account"),
     new SlashCommandBuilder().setName("gumball").setDescription("Play the gumball machine — costs 1 Token per spin"),
@@ -238,7 +242,7 @@ client.once("ready", async () => {
   ];
 
   await client.application.commands.set(commands);
-  console.log("✅ All commands registered successfully");
+  console.log("✅ All commands freshly registered");
 
   // Weekly leaderboard schedule
   cron.schedule("0 18 * * *", () => postWeeklyLeaderboard(false));

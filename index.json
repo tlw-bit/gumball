@@ -2,7 +2,8 @@
   "bot": {
     "token": "",
     "habbo_name": "YOUR_HABBO_USERNAME",
-    "admin_role_id": 1457339777069092944
+    "admin_role_id": 1457339777069092944,
+    "support_role_id": 1466412624903274601
   },
   "rates": {
     "cost_per_pull": 1,
@@ -72,11 +73,13 @@
     "golden": []
   },
   "channels": {
-    "shop": null,
-    "wins": null
+    "shop": 1525210027038736504,
+    "claims": 1525210414030520360,
+    "mod_awareness": 1463577596439691396
   },
   "users": {},
   "deposit_requests": [],
   "pull_history": [],
-  "furni_deposits": []
+  "furni_deposits": [],
+  "pending_claims": {}
 }

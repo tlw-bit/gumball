@@ -4,14 +4,18 @@ FROM node:20-alpine
 # Set working directory inside the container
 WORKDIR /app
 
-# Copy dependency files first
+# Copy dependency files first for faster builds
 COPY package*.json ./
 
-# Install dependencies
-RUN npm install --only=production
+# Install only production dependencies
+RUN npm ci --only=production
 
-# Copy the rest of your bot code
+# Copy all your code and data files
 COPY . .
+
+# Set file permissions
+RUN chown -R node:node /app
+USER node
 
 # Start the bot
 CMD ["npm", "start"]

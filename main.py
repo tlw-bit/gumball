@@ -5,3 +5,4 @@ color = {
     "lilac": 0xa884f7,
     "golden": 0xFFD700
 }[group["id"]]
+await msg.edit(content=f"🎪 **Spinning...** {random.choice(['🔵','🟣','💚','🟪','✨'])}")

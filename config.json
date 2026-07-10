@@ -1,7 +1,7 @@
 {
   "bot": {
-    "token": "YOUR_DISCORD_BOT_TOKEN_HERE",
-    "habbo_owner": "YOUR_HABBO_USERNAME",
+    "token": "",
+    "habbo_owner": "cherby",
     "admin_role_id": "1457339777069092944",
     "support_role_id": "1466412624903274601",
     "owner_id": "1457339777069092944"

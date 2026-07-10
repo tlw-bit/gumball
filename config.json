@@ -1,0 +1,68 @@
+{
+  "bot": {
+    "token": "YOUR_DISCORD_BOT_TOKEN_HERE",
+    "habbo_name": "YOUR_HABBO_USERNAME",
+    "admin_role_id": 123456789012345678
+  },
+  "rates": {
+    "cost_per_pull": 1,
+    "starting_tokens": 5,
+    "furni_per_token": 20,
+    "token_packages": {
+      "3": 1,
+      "15": 5,
+      "25": 10,
+      "50": 25
+    },
+    "base_rate": 3,
+    "min_deposit": 3
+  },
+  "colour_groups": [
+    {
+      "id": "blue",
+      "name": "🔵 Blue",
+      "chance": 50,
+      "credit_min": 1,
+      "credit_max": 1,
+      "token_min": 1,
+      "token_max": 1
+    },
+    {
+      "id": "purple",
+      "name": "🟣 Purple",
+      "chance": 25,
+      "credit_min": 2,
+      "credit_max": 5,
+      "token_min": 1,
+      "token_max": 2
+    },
+    {
+      "id": "green",
+      "name": "💚 Mint Green",
+      "chance": 15,
+      "credit_min": 5,
+      "credit_max": 20,
+      "token_min": 2,
+      "token_max": 7
+    },
+    {
+      "id": "lilac",
+      "name": "🟪 Lilac",
+      "chance": 8,
+      "credit_min": 20,
+      "credit_max": 50,
+      "token_min": 7,
+      "token_max": 17
+    },
+    {
+  "id": "golden",
+  "name": "✨ GOLDEN JACKPOT",
+  "chance": 2,
+  "credit_min": 50,
+  "credit_max": 150,
+  "token_min": 17,
+  "token_max": 50
+}
+    }
+  ]
+}

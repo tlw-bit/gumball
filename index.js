@@ -70,19 +70,24 @@ function saveData() { fs.writeFileSync(DATA_PATH, JSON.stringify(DATA, null, 2))
 function saveHabboLinks() { fs.writeFileSync(HABBO_LINKS_PATH, JSON.stringify(habboLinks, null, 2)); }
 
 // ==============================================
-// HELPERS
+// HELPERS — FIXED AVATAR URL
 // ==============================================
 function getHabboName(discordId) { return habboLinks[discordId.toString()] || null; }
+
+// ✅ FIXED: Working Habbo avatar endpoint
 function getAvatar(habboName) {
-  if (!habboName) return "https://www.habbo.com/habbo-imaging/avatarimage?user=Habbo&headonly=1&size=s";
+  if (!habboName) return "https://www.habbo.com/habbo-imaging/avatarimage?user=Habbo&headonly=1&size=l";
   const safe = encodeURIComponent(habboName.trim());
-  return `https://www.habbo.com/habbo-imaging/avatarimage?user=${safe}&direction=2&headonly=1&size=s`;
+  return `https://www.habbo.com/habbo-imaging/avatarimage?user=${safe}&direction=2&headonly=1&size=l&gesture=std`;
 }
+
 function getFurniImage(name) {
   const safe = name.toLowerCase().replace(/ /g, "_").replace(/'/g, "").replace(/&/g, "and");
   return `https://images.habbo.com/dcr/hof_furni/${safe}_icon.png`;
 }
+
 function getAverageValue(g) { return g ? Math.round((g.credit_min + g.credit_max) / 2) : 0; }
+
 function ensureUser(id) {
   id = id.toString();
   if (!DATA.users[id]) DATA.users[id] = { balance: CONFIG.rates.starting_tokens, history: [] };
@@ -103,7 +108,7 @@ async function autoLinkVerified(member) {
 }
 
 // ==============================================
-// BOT SETUP — GUILD‑ONLY COMMANDS (INSTANT)
+// BOT SETUP — NO DUPLICATE COMMANDS
 // ==============================================
 const client = new Client({
   intents: [
@@ -120,6 +125,12 @@ client.once("ready", async () => {
   const guild = client.guilds.cache.get(CONFIG.bot.guild_id);
   if (!guild) return console.error("❌ Could not find your server! Check GUILD_ID.");
 
+  // 🧹 CLEAR ALL OLD COMMANDS FIRST — removes duplicates
+  await client.application.commands.set([]);
+  await guild.commands.set([]);
+  console.log("🧹 Cleared all old commands");
+
+  // ✅ REGISTER ONLY SERVER‑SPECIFIC COMMANDS
   const commands = [
     new SlashCommandBuilder().setName("balance").setDescription("Check your token balance and linked Habbo account"),
     new SlashCommandBuilder().setName("gumball").setDescription("Play the gumball machine — costs 1 Token per spin"),
@@ -147,7 +158,7 @@ client.once("ready", async () => {
   ];
 
   await guild.commands.set(commands);
-  console.log("✅ Commands registered DIRECTLY to your server — ready instantly!");
+  console.log("✅ Commands registered — NO duplicates!");
 
   cron.schedule("0 18 * * 0", () => {
     DATA.weeklyLeaderboard = { weekStart: new Date().toISOString(), users: {} };
@@ -156,213 +167,222 @@ client.once("ready", async () => {
 });
 
 // ==============================================
-// COMMAND & BUTTON HANDLING
+// COMMAND HANDLING — FIXED REPLIES
 // ==============================================
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand() && !interaction.isButton()) return;
+
   const isStaff = interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild) || interaction.member.roles.cache.has(CONFIG.bot.admin_role_id);
 
-  if (interaction.isChatInputCommand()) {
-    switch (interaction.commandName) {
+  try {
+    if (interaction.isChatInputCommand()) {
+      switch (interaction.commandName) {
 
-      case "balance": {
-        const habbo = await autoLinkVerified(interaction.member);
-        if (!habbo) {
-          return interaction.reply({
+        case "balance": {
+          const habbo = await autoLinkVerified(interaction.member);
+          if (!habbo) {
+            return await interaction.reply({
+              embeds: [new EmbedBuilder()
+                .setTitle("💰 Your Balance")
+                .addFields({ name: "Linked Habbo", value: "⚠️ Not Verified", inline: true })
+                .setColor("#e74c3c")],
+              flags: 64
+            });
+          }
+          const user = ensureUser(interaction.user.id);
+          return await interaction.reply({
             embeds: [new EmbedBuilder()
               .setTitle("💰 Your Balance")
-              .addFields({ name: "Linked Habbo", value: "⚠️ Not Verified", inline: true })
-              .setColor("#e74c3c")],
+              .setThumbnail(getAvatar(habbo))
+              .addFields(
+                { name: "Tokens", value: `**${user.balance}**`, inline: true },
+                { name: "Linked Habbo", value: `✅ **${habbo}**`, inline: true }
+              )
+              .setColor("#2ecc71")],
             flags: 64
           });
         }
-        const user = ensureUser(interaction.user.id);
-        return interaction.reply({
-          embeds: [new EmbedBuilder()
-            .setTitle("💰 Your Balance")
-            .setThumbnail(getAvatar(habbo))
-            .addFields(
-              { name: "Tokens", value: `**${user.balance}**`, inline: true },
-              { name: "Linked Habbo", value: `✅ **${habbo}**`, inline: true }
-            )
-            .setColor("#2ecc71")],
-          flags: 64
-        });
-      }
 
-      case "howtoplay": {
-        return interaction.reply({
-          embeds: [new EmbedBuilder()
-            .setTitle("📋 How To Play")
-            .setDescription(`• **3 Credits = 1 Token**\n• **20 Furni = 1 Token**\n• 15c = 5 Tokens\n• 25c = 10 Tokens\n• 50c = 25 Tokens\n\n📍 Room: ${CONFIG.room_link}`)
-            .setColor("#3498db")],
-          flags: 64
-        });
-      }
-
-      case "depositcoins": {
-        const habbo = await autoLinkVerified(interaction.member);
-        if (!habbo) return interaction.reply({ content: "❌ You must be verified first!", flags: 64 });
-        const amount = interaction.options.getInteger("amount");
-        const tokens = {15:5, 25:10, 50:25}[amount] || Math.floor(amount / CONFIG.rates.credit_per_token);
-        const depId = Date.now();
-        DATA.deposit_requests[depId] = { type: "coins", userId: interaction.user.id, habbo, amount, tokens, status: "pending" };
-        saveData();
-        const embed = new EmbedBuilder()
-          .setTitle("💸 New Credit Deposit")
-          .setDescription(`**User:** ${interaction.user}\n**Habbo:** ${habbo}\n**Amount:** ${amount}c\n**Tokens:** ${tokens}`)
-          .setColor("#f39c12");
-        const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId(`dep_approve_${depId}`).setLabel("✅ Approve").setStyle(ButtonStyle.Success),
-          new ButtonBuilder().setCustomId(`dep_deny_${depId}`).setLabel("❌ Deny").setStyle(ButtonStyle.Danger)
-        );
-        const ch = await client.channels.fetch(CONFIG.channels.mod_awareness).catch(() => null);
-        if (ch) ch.send({ embeds: [embed], components: [row] });
-        return interaction.reply({ content: "✅ Deposit submitted for approval.", flags: 64 });
-      }
-
-      case "depositfurni": {
-        const habbo = await autoLinkVerified(interaction.member);
-        if (!habbo) return interaction.reply({ content: "❌ You must be verified first!", flags: 64 });
-        const items = interaction.options.getString("items");
-        const depId = Date.now();
-        DATA.deposit_requests[depId] = { type: "furni", userId: interaction.user.id, habbo, items, tokens: null, status: "pending" };
-        saveData();
-        const embed = new EmbedBuilder()
-          .setTitle("📦 New Furni Deposit")
-          .setDescription(`**User:** ${interaction.user}\n**Habbo:** ${habbo}\n**Items:** ${items}\n**Rate:** ${CONFIG.rates.furni_per_token} = 1 Token`)
-          .setColor("#9b59b6");
-        const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId(`dep_approve_${depId}`).setLabel("✅ Approve").setStyle(ButtonStyle.Success),
-          new ButtonBuilder().setCustomId(`dep_deny_${depId}`).setLabel("❌ Deny").setStyle(ButtonStyle.Danger)
-        );
-        const ch = await client.channels.fetch(CONFIG.channels.mod_awareness).catch(() => null);
-        if (ch) ch.send({ embeds: [embed], components: [row] });
-        return interaction.reply({ content: "✅ Furni deposit submitted for approval.", flags: 64 });
-      }
-
-      case "gumball": {
-        const habbo = await autoLinkVerified(interaction.member);
-        if (!habbo) return interaction.reply({ content: "❌ You must be verified first!", flags: 64 });
-        const user = ensureUser(interaction.user.id);
-        if (user.balance < 1) return interaction.reply({ content: "❌ You need at least 1 Token to play!", flags: 64 });
-        user.balance -= 1;
-        saveData();
-        const group = CONFIG.rarity_groups.sort((a,b) => b.chance - a.chance).find(g => Math.random() * 100 < g.chance) || CONFIG.rarity_groups[4];
-        const items = STOCK[group.id]?.filter(i => i.stock > 0) || [];
-        if (!items.length) {
-          user.balance += 1;
-          saveData();
-          return interaction.reply({ content: "😕 No prizes available — token refunded.", flags: 64 });
+        case "howtoplay": {
+          return await interaction.reply({
+            embeds: [new EmbedBuilder()
+              .setTitle("📋 How To Play")
+              .setDescription(`• **3 Credits = 1 Token**\n• **20 Furni = 1 Token**\n• 15c = 5 Tokens\n• 25c = 10 Tokens\n• 50c = 25 Tokens\n\n📍 Room: ${CONFIG.room_link}`)
+              .setColor("#3498db")],
+            flags: 64
+          });
         }
-        const prize = items[Math.floor(Math.random() * items.length)];
-        prize.stock--;
-        saveStock();
-        const avgVal = getAverageValue(group);
-        const wonTokens = Math.floor(Math.random() * (group.token_max - group.token_min + 1)) + group.token_min;
-        user.balance += wonTokens;
-        saveData();
-        return interaction.reply({
-          embeds: [new EmbedBuilder()
-            .setTitle("🎉 YOU WON!")
-            .setThumbnail(getFurniImage(prize.name))
-            .setAuthor({ name: habbo, iconURL: getAvatar(habbo) })
-            .addFields(
-              { name: "Prize", value: `**${prize.name}**`, inline: false },
-              { name: "Estimated Value", value: `~${avgVal} Credits`, inline: true },
-              { name: "Tokens Won", value: `+${wonTokens}`, inline: true },
-              { name: "New Balance", value: `${user.balance}`, inline: true }
-            )
-            .setColor(group.color)],
-          flags: 64
-        });
-      }
 
-      case "addtokens": {
-        if (!isStaff) return interaction.reply({ content: "❌ No permission", flags: 64 });
-        const target = interaction.options.getUser("user");
-        const amount = interaction.options.getInteger("amount");
-        ensureUser(target.id).balance += amount;
-        saveData();
-        return interaction.reply({ content: `✅ Added ${amount} tokens to ${target}`, flags: 64 });
-      }
+        case "depositcoins": {
+          const habbo = await autoLinkVerified(interaction.member);
+          if (!habbo) return await interaction.reply({ content: "❌ You must be verified first!", flags: 64 });
+          const amount = interaction.options.getInteger("amount");
+          const tokens = {15:5, 25:10, 50:25}[amount] || Math.floor(amount / CONFIG.rates.credit_per_token);
+          const depId = Date.now();
+          DATA.deposit_requests[depId] = { type: "coins", userId: interaction.user.id, habbo, amount, tokens, status: "pending" };
+          saveData();
+          const embed = new EmbedBuilder()
+            .setTitle("💸 New Credit Deposit")
+            .setDescription(`**User:** ${interaction.user}\n**Habbo:** ${habbo}\n**Amount:** ${amount}c\n**Tokens:** ${tokens}`)
+            .setColor("#f39c12");
+          const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`dep_approve_${depId}`).setLabel("✅ Approve").setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId(`dep_deny_${depId}`).setLabel("❌ Deny").setStyle(ButtonStyle.Danger)
+          );
+          const ch = await client.channels.fetch(CONFIG.channels.mod_awareness).catch(() => null);
+          if (ch) await ch.send({ embeds: [embed], components: [row] });
+          return await interaction.reply({ content: "✅ Deposit submitted for approval.", flags: 64 });
+        }
 
-      case "removetokens": {
-        if (!isStaff) return interaction.reply({ content: "❌ No permission", flags: 64 });
-        const target = interaction.options.getUser("user");
-        const amount = interaction.options.getInteger("amount");
-        ensureUser(target.id).balance = Math.max(0, ensureUser(target.id).balance - amount);
-        saveData();
-        return interaction.reply({ content: `✅ Removed ${amount} tokens from ${target}`, flags: 64 });
-      }
+        case "depositfurni": {
+          const habbo = await autoLinkVerified(interaction.member);
+          if (!habbo) return await interaction.reply({ content: "❌ You must be verified first!", flags: 64 });
+          const items = interaction.options.getString("items");
+          const depId = Date.now();
+          DATA.deposit_requests[depId] = { type: "furni", userId: interaction.user.id, habbo, items, tokens: null, status: "pending" };
+          saveData();
+          const embed = new EmbedBuilder()
+            .setTitle("📦 New Furni Deposit")
+            .setDescription(`**User:** ${interaction.user}\n**Habbo:** ${habbo}\n**Items:** ${items}\n**Rate:** ${CONFIG.rates.furni_per_token} = 1 Token`)
+            .setColor("#9b59b6");
+          const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`dep_approve_${depId}`).setLabel("✅ Approve").setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId(`dep_deny_${depId}`).setLabel("❌ Deny").setStyle(ButtonStyle.Danger)
+          );
+          const ch = await client.channels.fetch(CONFIG.channels.mod_awareness).catch(() => null);
+          if (ch) await ch.send({ embeds: [embed], components: [row] });
+          return await interaction.reply({ content: "✅ Furni deposit submitted for approval.", flags: 64 });
+        }
 
-      case "showprizes": {
-        const embeds = CONFIG.rarity_groups.map(g => new EmbedBuilder()
-          .setTitle(`${g.name} Prizes`)
-          .setDescription(`**Chance:** ${g.chance}%\n**Value:** ${g.credit_min}–${g.credit_max} Credits`)
-          .setColor(g.color)
-          .addFields({ name: "In Stock", value: STOCK[g.id]?.filter(i => i.stock > 0).map(i => `• ${i.name} × ${i.stock}`).join("\n") || "None" })
-        );
-        return interaction.reply({ embeds, flags: 64 });
-      }
+        case "gumball": {
+          const habbo = await autoLinkVerified(interaction.member);
+          if (!habbo) return await interaction.reply({ content: "❌ You must be verified first!", flags: 64 });
+          const user = ensureUser(interaction.user.id);
+          if (user.balance < 1) return await interaction.reply({ content: "❌ You need at least 1 Token to play!", flags: 64 });
+          user.balance -= 1;
+          saveData();
+          const group = CONFIG.rarity_groups.sort((a,b) => b.chance - a.chance).find(g => Math.random() * 100 < g.chance) || CONFIG.rarity_groups[4];
+          const items = STOCK[group.id]?.filter(i => i.stock > 0) || [];
+          if (!items.length) {
+            user.balance += 1;
+            saveData();
+            return await interaction.reply({ content: "😕 No prizes available — token refunded.", flags: 64 });
+          }
+          const prize = items[Math.floor(Math.random() * items.length)];
+          prize.stock--;
+          saveStock();
+          const avgVal = getAverageValue(group);
+          const wonTokens = Math.floor(Math.random() * (group.token_max - group.token_min + 1)) + group.token_min;
+          user.balance += wonTokens;
+          saveData();
+          return await interaction.reply({
+            embeds: [new EmbedBuilder()
+              .setTitle("🎉 YOU WON!")
+              .setThumbnail(getFurniImage(prize.name))
+              .setAuthor({ name: habbo, iconURL: getAvatar(habbo) })
+              .addFields(
+                { name: "Prize", value: `**${prize.name}**`, inline: false },
+                { name: "Estimated Value", value: `~${avgVal} Credits`, inline: true },
+                { name: "Tokens Won", value: `+${wonTokens}`, inline: true },
+                { name: "New Balance", value: `${user.balance}`, inline: true }
+              )
+              .setColor(group.color)],
+            flags: 64
+          });
+        }
 
-      case "history": {
-        const user = ensureUser(interaction.user.id);
-        return interaction.reply({
-          embeds: [new EmbedBuilder()
-            .setTitle("📜 Your Activity History")
-            .setDescription(user.history.length ? user.history.map(e => `• ${new Date(e.timestamp).toLocaleString()} — ${e.type}: ${e.detail}`).join("\n") : "No activity yet")],
-          flags: 64
-        });
-      }
+        case "addtokens": {
+          if (!isStaff) return await interaction.reply({ content: "❌ No permission", flags: 64 });
+          const target = interaction.options.getUser("user");
+          const amount = interaction.options.getInteger("amount");
+          ensureUser(target.id).balance += amount;
+          saveData();
+          return await interaction.reply({ content: `✅ Added ${amount} tokens to ${target}`, flags: 64 });
+        }
 
-      case "addstock": {
-        if (!isStaff) return interaction.reply({ content: "❌ No permission", flags: 64 });
-        const group = interaction.options.getString("group").toLowerCase();
-        const name = interaction.options.getString("name");
-        const amount = interaction.options.getInteger("amount");
-        if (!STOCK.hasOwnProperty(group)) return interaction.reply({ content: "❌ Invalid group — use blue/purple/green/lilac/golden", flags: 64 });
-        const existing = STOCK[group].find(i => i.name.toLowerCase() === name.toLowerCase());
-        existing ? existing.stock += amount : STOCK[group].push({ name, stock: amount });
-        saveStock();
-        return interaction.reply({ content: `✅ Added **${name} × ${amount}** to ${group} stock`, flags: 64 });
-      }
+        case "removetokens": {
+          if (!isStaff) return await interaction.reply({ content: "❌ No permission", flags: 64 });
+          const target = interaction.options.getUser("user");
+          const amount = interaction.options.getInteger("amount");
+          ensureUser(target.id).balance = Math.max(0, ensureUser(target.id).balance - amount);
+          saveData();
+          return await interaction.reply({ content: `✅ Removed ${amount} tokens from ${target}`, flags: 64 });
+        }
 
-      case "removestock": {
-        if (!isStaff) return interaction.reply({ content: "❌ No permission", flags: 64 });
-        const group = interaction.options.getString("group").toLowerCase();
-        const name = interaction.options.getString("name");
-        const amount = interaction.options.getInteger("amount");
-        if (!STOCK.hasOwnProperty(group)) return interaction.reply({ content: "❌ Invalid group", flags: 64 });
-        const idx = STOCK[group].findIndex(i => i.name.toLowerCase() === name.toLowerCase());
-        if (idx === -1) return interaction.reply({ content: "❌ Item not found", flags: 64 });
-        STOCK[group][idx].stock -= amount;
-        if (STOCK[group][idx].stock <= 0) STOCK[group].splice(idx, 1);
-        saveStock();
-        return interaction.reply({ content: `✅ Updated stock for **${name}**`, flags: 64 });
+        case "showprizes": {
+          const embeds = CONFIG.rarity_groups.map(g => new EmbedBuilder()
+            .setTitle(`${g.name} Prizes`)
+            .setDescription(`**Chance:** ${g.chance}%\n**Value:** ${g.credit_min}–${g.credit_max} Credits`)
+            .setColor(g.color)
+            .addFields({ name: "In Stock", value: STOCK[g.id]?.filter(i => i.stock > 0).map(i => `• ${i.name} × ${i.stock}`).join("\n") || "None" })
+          );
+          return await interaction.reply({ embeds, flags: 64 });
+        }
+
+        case "history": {
+          const user = ensureUser(interaction.user.id);
+          return await interaction.reply({
+            embeds: [new EmbedBuilder()
+              .setTitle("📜 Your Activity History")
+              .setDescription(user.history.length ? user.history.map(e => `• ${new Date(e.timestamp).toLocaleString()} — ${e.type}: ${e.detail}`).join("\n") : "No activity yet")],
+            flags: 64
+          });
+        }
+
+        case "addstock": {
+          if (!isStaff) return await interaction.reply({ content: "❌ No permission", flags: 64 });
+          const group = interaction.options.getString("group").toLowerCase();
+          const name = interaction.options.getString("name");
+          const amount = interaction.options.getInteger("amount");
+          if (!STOCK.hasOwnProperty(group)) return await interaction.reply({ content: "❌ Invalid group — use blue/purple/green/lilac/golden", flags: 64 });
+          const existing = STOCK[group].find(i => i.name.toLowerCase() === name.toLowerCase());
+          existing ? existing.stock += amount : STOCK[group].push({ name, stock: amount });
+          saveStock();
+          return await interaction.reply({ content: `✅ Added **${name} × ${amount}** to ${group} stock`, flags: 64 });
+        }
+
+        case "removestock": {
+          if (!isStaff) return await interaction.reply({ content: "❌ No permission", flags: 64 });
+          const group = interaction.options.getString("group").toLowerCase();
+          const name = interaction.options.getString("name");
+          const amount = interaction.options.getInteger("amount");
+          if (!STOCK.hasOwnProperty(group)) return await interaction.reply({ content: "❌ Invalid group", flags: 64 });
+          const idx = STOCK[group].findIndex(i => i.name.toLowerCase() === name.toLowerCase());
+          if (idx === -1) return await interaction.reply({ content: "❌ Item not found", flags: 64 });
+          STOCK[group][idx].stock -= amount;
+          if (STOCK[group][idx].stock <= 0) STOCK[group].splice(idx, 1);
+          saveStock();
+          return await interaction.reply({ content: `✅ Updated stock for **${name}**`, flags: 64 });
+        }
       }
     }
-  }
 
-  // Button handling
-  if (interaction.isButton()) {
-    const [action, type, idStr] = interaction.customId.split("_");
-    const id = parseInt(idStr);
-    const dep = DATA.deposit_requests?.[id];
-    if (!dep || !isStaff) return interaction.reply({ content: "❌ Invalid action", flags: 64 });
-    if (type === "approve") {
-      const user = ensureUser(dep.userId);
-      user.balance += dep.tokens;
-      saveData();
-      await interaction.update({
-        embeds: [EmbedBuilder.from(interaction.message.embeds[0]).setColor("#2ecc71").setDescription(`✅ Approved by ${interaction.user.tag}`)],
-        components: []
-      });
-    } else if (type === "deny") {
-      await interaction.update({
-        embeds: [EmbedBuilder.from(interaction.message.embeds[0]).setColor("#e74c3c").setDescription(`❌ Denied by ${interaction.user.tag}`)],
-        components: []
-      });
+    // Button handling
+    if (interaction.isButton()) {
+      const [action, type, idStr] = interaction.customId.split("_");
+      const id = parseInt(idStr);
+      const dep = DATA.deposit_requests?.[id];
+      if (!dep || !isStaff) return await interaction.reply({ content: "❌ Invalid action", flags: 64 });
+      if (type === "approve") {
+        const user = ensureUser(dep.userId);
+        user.balance += dep.tokens;
+        saveData();
+        return await interaction.update({
+          embeds: [EmbedBuilder.from(interaction.message.embeds[0]).setColor("#2ecc71").setDescription(`✅ Approved by ${interaction.user.tag}`)],
+          components: []
+        });
+      } else if (type === "deny") {
+        return await interaction.update({
+          embeds: [EmbedBuilder.from(interaction.message.embeds[0]).setColor("#e74c3c").setDescription(`❌ Denied by ${interaction.user.tag}`)],
+          components: []
+        });
+      }
+    }
+
+  } catch (err) {
+    console.error("❌ Interaction error:", err.message);
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.reply({ content: "❌ Something went wrong. Please try again.", flags: 64 }).catch(() => {});
     }
   }
 });

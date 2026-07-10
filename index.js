@@ -203,15 +203,41 @@ client.on("interactionCreate", async interaction => {
           });
         }
 
-        case "howtoplay": {
-          return await interaction.reply({
-            embeds: [new EmbedBuilder()
-              .setTitle("📋 How To Play")
-              .setDescription(`• **3 Credits = 1 Token**\n• **20 Furni = 1 Token**\n• 15c = 5 Tokens\n• 25c = 10 Tokens\n• 50c = 25 Tokens\n\n📍 Room: ${CONFIG.room_link}`)
-              .setColor("#3498db")],
-            flags: 64
-          });
-        }
+   case "howtoplay": {
+  const description = `
+📋 **How To Play & Get Tokens**
+Earn or buy tokens, then play for prizes!
+
+💱 **Exchange Rates**
+• Base Rate: **3 Credits = 1 Token**
+• Furni Rate: **20 Furni = 1 Token**
+
+🛒 **Bulk Deals**
+• 15 Credits → 5 Tokens
+• 25 Credits → 10 Tokens
+• 50 Credits → 25 Tokens
+
+📤 **Deposit**
+Send items to our room, then use:
+\`/depositcoins\` or \`/depositfurni\`
+
+📍 **Room:** ${CONFIG.room_link}
+
+🎮 **Play**
+Use \`/gumball\` → **1 Token per spin**
+  `.trim();
+
+  return await interaction.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setTitle("📋 How To Play & Get Tokens")
+        .setDescription(description)
+        .setColor("#3498db")
+        .setTimestamp()
+    ]
+    // ❌ Removed flags: 64 so EVERYONE can see it
+  });
+}
 
         case "depositcoins": {
           const habbo = await autoLinkVerified(interaction.member);

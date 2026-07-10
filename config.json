@@ -1,23 +1,30 @@
 {
   "bot": {
     "token": "YOUR_DISCORD_BOT_TOKEN_HERE",
-    "habbo_name": "YOUR_HABBO_USERNAME",
-    "admin_role_id": 123456789012345678
+    "habbo_owner": "YOUR_HABBO_USERNAME",
+    "admin_role_id": "1457339777069092944",
+    "support_role_id": "1466412624903274601",
+    "owner_tag": "@owner"
+  },
+  "channels": {
+    "shop": "1525210027038736504",
+    "claims": "1525210414030520360",
+    "mod_awareness": "1463577596439691396"
   },
   "rates": {
     "cost_per_pull": 1,
     "starting_tokens": 5,
     "furni_per_token": 20,
-    "token_packages": {
+    "base_credit_rate": 3,
+    "min_deposit": 3,
+    "token_packs": {
       "3": 1,
       "15": 5,
       "25": 10,
       "50": 25
-    },
-    "base_rate": 3,
-    "min_deposit": 3
+    }
   },
-  "colour_groups": [
+  "rarity_groups": [
     {
       "id": "blue",
       "name": "🔵 Blue",
@@ -25,7 +32,8 @@
       "credit_min": 1,
       "credit_max": 1,
       "token_min": 1,
-      "token_max": 1
+      "token_max": 1,
+      "color": 3498699
     },
     {
       "id": "purple",
@@ -34,7 +42,8 @@
       "credit_min": 2,
       "credit_max": 5,
       "token_min": 1,
-      "token_max": 2
+      "token_max": 2,
+      "color": 10197942
     },
     {
       "id": "green",
@@ -43,7 +52,8 @@
       "credit_min": 5,
       "credit_max": 20,
       "token_min": 2,
-      "token_max": 7
+      "token_max": 7,
+      "color": 3055985
     },
     {
       "id": "lilac",
@@ -52,7 +62,8 @@
       "credit_min": 20,
       "credit_max": 50,
       "token_min": 7,
-      "token_max": 17
+      "token_max": 17,
+      "color": 11052279
     },
     {
       "id": "golden",
@@ -61,7 +72,10 @@
       "credit_min": 50,
       "credit_max": 150,
       "token_min": 17,
-      "token_max": 50
+      "token_max": 50,
+      "color": 16766720
     }
-  ]
+  ],
+  "room_link": "https://www.habbo.com/room/80384728",
+  "stock_refresh_minutes": 5
 }

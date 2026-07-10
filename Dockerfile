@@ -7,8 +7,8 @@ WORKDIR /app
 # Copy dependency files first for faster builds
 COPY package*.json ./
 
-# Install only production dependencies
-RUN npm ci --only=production
+# Install dependencies (works without package-lock.json)
+RUN npm install --only=production
 
 # Copy all your code and data files
 COPY . .

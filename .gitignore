@@ -1,7 +1,3 @@
-index.json
-.env
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.DS_Store
+# .gitignore file
+config.json
+node_modules

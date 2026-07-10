@@ -1,10 +1,7 @@
-# Sensitive data
-*.json
-.env
+# Sensitive file
+index.json
 
 # Python files
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
 .DS_Store

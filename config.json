@@ -55,14 +55,13 @@
       "token_max": 17
     },
     {
-  "id": "golden",
-  "name": "✨ GOLDEN JACKPOT",
-  "chance": 2,
-  "credit_min": 50,
-  "credit_max": 150,
-  "token_min": 17,
-  "token_max": 50
-}
+      "id": "golden",
+      "name": "✨ GOLDEN JACKPOT",
+      "chance": 2,
+      "credit_min": 50,
+      "credit_max": 150,
+      "token_min": 17,
+      "token_max": 50
     }
   ]
 }

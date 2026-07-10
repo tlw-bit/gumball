@@ -1,0 +1,41 @@
+# 🎪 Habbo Gumball & Furni Shop Bot
+A Discord bot that replicates your in-game gumball machine, token system, and furni shop.
+
+---
+
+## ✅ FEATURES
+- **Token System**: 3c = 1 Token, with discount packages
+- **Gumball Machine**: 1 Token per pull, fully random prizes, animated rolling effect
+- **Deposit System**: Users buy tokens via Habbo Credits, admin approval
+- **Auto-Updating Furni Shop**: Permanent thread view, stock control, images from Habbo
+- **Admin Tools**: Approve deposits, restock items, view history, manage everything
+- **Data Persistence**: All balances, stock, and logs saved in JSON file
+
+---
+
+## ⚙️ PRICING RULES
+### Tokens
+- Base rate: **3 Habbo Credits = 1 Token**
+- Discount packages:
+  - `3c → 1 Token`
+  - `15c → 5 Tokens`
+  - `25c → 10 Tokens`
+  - `50c → 25 Tokens`
+
+### Gumball Machine
+- **Cost**: 1 Token per pull
+- **Odds & Prizes**:
+  | Ball Colour   | Chance | Credit Value | Tokens Won |
+  |---------------|--------|--------------|------------|
+  | 🔵 Blue       | 50%    | 1c           | 1 Token    |
+  | 🟣 Purple     | 25%    | 2–5c         | 1–2 Tokens |
+  | 💚 Mint Green | 15%    | 5–20c        | 2–7 Tokens |
+  | 🟪 Lilac      | 8%     | 20–50c       | 7–17 Tokens|
+  | 🟟 Dark Purple| 2%     | 50–150c      | 17–50 Tokens|
+
+---
+
+## 🚀 SETUP INSTRUCTIONS
+### 1. Install Requirements
+```bash
+pip install -r requirements.txt

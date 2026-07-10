@@ -1,7 +1,7 @@
-# Sensitive file
 index.json
-
-# Python files
+.env
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 .DS_Store

@@ -278,7 +278,7 @@ async function updateLeaderboard() {
 }
 
 // ==============================================
-// STOCK DISPLAY — DEFINED EARLY
+// ✅ STOCK DISPLAY — DEFINED BEFORE USE + FIXED IMAGES
 // ==============================================
 async function buildStockEmbeds() {
   const embeds = [];
@@ -296,31 +296,38 @@ async function buildStockEmbeds() {
     if (totalStock === 0) {
       embed.setDescription("**Prices:** Market Average — final value may vary due to tax/fees\n\n> No items currently in stock");
     } else {
-      // Add items in rows of 3 (fits better with images)
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i];
+      let content = "";
+      for (const item of items) {
         const details = await getFurniDetails(item.name);
-
-        // Layout: Name, then Price + Stock, then IMAGE rendered properly
-        embed.addFields({
-          name: `**${details.name}**`,
-          value: `Market Avg: ${details.price} | Stock: ${item.stock}\n[⠀](${details.icon})`,
-          inline: true
-        });
-
-        // New row after every 3 items
-        if ((i + 1) % 3 === 0) {
-          embed.addFields({ name: "\u200B", value: "\u200B", inline: true });
-        }
+        // Format: Name → Image → Price | Stock
+        content += `**${details.name}**\n[⠀](${details.icon})\nMarket Avg: ${details.price} | Stock: ${item.stock}\n\n`;
       }
-
-      embed.setFooter({ text: `Total in category: ${totalStock} items • Updated every 15 mins` });
+      embed.setDescription(`**Prices:** Market Average — final value may vary due to tax/fees\n\n${content.trim()}`);
     }
 
+    embed.setFooter({ text: `Total in category: ${totalStock} items • Updated every 15 mins` });
     embeds.push(embed);
   }
 
   return embeds;
+}
+
+async function updateStockDisplay() {
+  if (!CONFIG.channels.stock_display) return;
+  const ch = await client.channels.fetch(CONFIG.channels.stock_display).catch(() => null);
+  if (!ch) return;
+
+  const embeds = await buildStockEmbeds();
+
+  try {
+    if (DATA.stock_display_message_id) {
+      const msg = await ch.messages.fetch(DATA.stock_display_message_id).catch(() => null);
+      if (msg) return msg.edit({ embeds: embeds });
+    }
+    const newMsg = await ch.send({ embeds: embeds });
+    DATA.stock_display_message_id = newMsg.id;
+    saveData();
+  } catch {}
 }
 
 // ==============================================
@@ -363,7 +370,7 @@ const client = new Client({
   ]
 });
 
-// ✅ Fixed: All functions defined BEFORE clientReady
+// ✅ All functions defined BEFORE clientReady
 client.once("clientReady", async () => {
   console.log(`✅ Gumball Bot online as ${client.user.tag}`);
   console.log(`🔍 Loaded GUILD_ID: "${CONFIG.bot.guild_id}"`);

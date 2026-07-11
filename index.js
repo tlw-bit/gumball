@@ -9,7 +9,7 @@ const {
   ButtonStyle,
   SlashCommandBuilder,
   PermissionsBitField,
-  MessageFlags
+  MessageFla
 } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
@@ -282,7 +282,7 @@ async function updateLeaderboard() {
 }
 
 // ==============================================
-// STOCK DISPLAY — YOUR EXACT LAYOUT
+// STOCK DISPLAY — FIXED IMAGE RENDERING
 // ==============================================
 async function buildStockEmbeds() {
   const embeds = [];
@@ -298,9 +298,9 @@ async function buildStockEmbeds() {
       .setTimestamp();
 
     if (totalStock === 0) {
-      embed.addFields({ name: "\u200B", value: "> No items currently in stock", inline: false });
+      embed.setDescription("**Prices:** Market Average — final value may vary due to tax/fees\n\n> No items currently in stock");
     } else {
-      // Arrange items in rows of 5
+      // Add items in rows of 5
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
         const details = await getFurniDetails(item.name);
@@ -308,7 +308,7 @@ async function buildStockEmbeds() {
         // Format: Name → Image → Price | Stock
         embed.addFields({
           name: `**${details.name}**`,
-          value: `[ ](${details.icon})\nMarket Avg: ${details.price} | Stock: ${item.stock}`,
+          value: `[${details.icon}](${details.icon})\nMarket Avg: ${details.price} | Stock: ${item.stock}`,
           inline: true
         });
 

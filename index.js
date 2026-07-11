@@ -35,6 +35,7 @@ const CONFIG = {
   },
   habbo_assets_token: process.env.HABBO_ASSETS_TOKEN || "",
   habbofurni_token: process.env.HABBOFURNI_TOKEN || "",
+  habboapi_key: process.env.HABBOAPI_KEY || "", // Optional: add if you get one
   room_link: "https://www.habbo.com/room/1234567",
   rates: {
     starting_tokens: 0,
@@ -94,6 +95,9 @@ function getAvatar(habboName) {
   return `https://www.habbo.com/habbo-imaging/avatarimage?user=${safe}&direction=2&headonly=1&size=l`;
 }
 
+// ==============================================
+// ✅ NEW FURNI LOOKUP — HABBOAPI SITE FIRST
+// ==============================================
 async function getFurniDetails(furniName) {
   const original = furniName.trim();
   const searchKey = normalizeName(original);
@@ -101,75 +105,74 @@ async function getFurniDetails(furniName) {
   let iconUrl = CONFIG.default_image;
   let price = "❌ No price data";
   let matchedName = original;
+  let classname = null;
 
-  // 1. Habbo Assets
-  if (CONFIG.habbo_assets_token) {
-    try {
-      const res = await fetch(`https://habboassets.com/api/search?q=${encodeURIComponent(original)}&limit=20`, {
-        headers: { Authorization: `Bearer ${CONFIG.habbo_assets_token}` },
-        timeout: 5000
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.items?.length > 0) {
-          let best = data.items.find(i => normalizeName(i.name) === searchKey);
-          if (!best) best = data.items.find(i => normalizeName(i.name).includes(searchKey));
-          if (!best) best = data.items[0];
-          if (best) {
-            iconUrl = best.image_url || best.icon_url || CONFIG.default_image;
-            matchedName = best.name;
-          }
-        }
-      }
-    } catch {}
-  }
-
-  // 2. Habbofurni
-  if (iconUrl === CONFIG.default_image && CONFIG.habbofurni_token) {
-    try {
-      const res = await fetch(`https://habbofurni.com/api/v1/furniture?search=${encodeURIComponent(original)}&per_page=10`, {
-        headers: {
-          Authorization: `Bearer ${CONFIG.habbofurni_token}`,
-          "X-Hotel-ID": "1",
-          Accept: "application/json"
-        },
-        timeout: 5000
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.data?.length > 0) {
-          let best = data.data.find(item => normalizeName(item.hotelData.name) === searchKey);
-          if (!best) best = data.data.find(item => normalizeName(item.hotelData.name).includes(searchKey));
-          if (!best) best = data.data[0];
-          if (best?.hotelData?.icon?.url) {
-            iconUrl = best.hotelData.icon.url;
-            matchedName = best.hotelData.name;
-          }
-        }
-      }
-    } catch {}
-  }
-
-  // 3. FurniEye — improved matching
+  // --- 1. HABBOAPI.SITE: Get Price + Classname ---
   try {
-    const res = await fetch(`https://www.furnieye.com/api/search?q=${encodeURIComponent(original)}&limit=20`, {
-      timeout: 5000
+    const headers = { "Accept": "application/json" };
+    if (CONFIG.habboapi_key) headers["X-Auth-Key"] = CONFIG.habboapi_key;
+
+    const res = await fetch(`https://habboapi.site/api/market/history?name=${encodeURIComponent(original)}&hotel=com`, {
+      headers,
+      timeout: 6000
     });
+
     if (res.ok) {
       const data = await res.json();
-      if (data.results?.length > 0) {
-        let best = data.results.find(i => normalizeName(i.name) === searchKey);
-        if (!best) best = data.results.find(i => normalizeName(i.name).includes(searchKey));
-        if (!best) best = data.results.find(i => searchKey.includes(normalizeName(i.name)));
-        if (!best) best = data.results[0];
-        if (best?.average_price != null) {
-          price = `${best.average_price}c`;
+      if (Array.isArray(data) && data.length > 0) {
+        // Find best match
+        let best = data.find(i => normalizeName(i.FurniName) === searchKey);
+        if (!best) best = data.find(i => normalizeName(i.FurniName).includes(searchKey));
+        if (!best) best = data[0];
+
+        if (best) {
+          matchedName = best.FurniName;
+          classname = best.ClassName;
+          if (best.marketData?.averagePrice) {
+            price = `${best.marketData.averagePrice}c`;
+          }
+          // Get direct image from same API
+          iconUrl = `https://habboapi.site/api/image/${best.ClassName}`;
         }
       }
     }
   } catch {}
 
-  return { icon: iconUrl, price, name: matchedName };
+  // --- 2. Fallback: Habbo Assets if no image yet ---
+  if (iconUrl === CONFIG.default_image && CONFIG.habbo_assets_token) {
+    try {
+      const res = await fetch(`https://habboassets.com/api/search?q=${encodeURIComponent(original)}&limit=10`, {
+        headers: { Authorization: `Bearer ${CONFIG.habbo_assets_token}` },
+        timeout: 4000
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.items?.length > 0) {
+          const best = data.items.find(i => normalizeName(i.name) === searchKey) || data.items[0];
+          if (best) {
+            iconUrl = best.image_url || best.icon_url;
+            matchedName = matchedName !== original ? matchedName : best.name;
+          }
+        }
+      }
+    } catch {}
+  }
+
+  // --- 3. Fallback: FurniEye only if still no price ---
+  if (price === "❌ No price data") {
+    try {
+      const res = await fetch(`https://www.furnieye.com/api/search?q=${encodeURIComponent(original)}&limit=10`, { timeout: 4000 });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.results?.length > 0) {
+          const best = data.results.find(i => normalizeName(i.name) === searchKey) || data.results[0];
+          if (best?.average_price) price = `${best.average_price}c`;
+        }
+      }
+    } catch {}
+  }
+
+  return { icon: iconUrl, price, name: matchedName, exists: true };
 }
 
 // ==============================================
@@ -178,8 +181,8 @@ async function getFurniDetails(furniName) {
 async function buildStockEmbed() {
   const embed = new EmbedBuilder()
     .setTitle("🎁 Available Prizes & Stock")
-    .setDescription("Images: Habbo Assets + Habbofurni • Prices: FurniEye\nItems arranged in rows of 5")
-    .setColor("#1a1a2e")
+    .setDescription("**Images:** HabboAPI • **Prices:** HabboAPI + FurniEye\n• Items arranged in rows of 5")
+    .setColor("#23272A")
     .setTimestamp();
 
   for (const group of CONFIG.rarity_groups) {
@@ -190,19 +193,19 @@ async function buildStockEmbed() {
     }
 
     // Split into rows of 5 items
-    for (let i = 0; i < items.length; i += 5) {
-      const rowItems = items.slice(i, i + 5);
-      let rowText = "";
+    for (let rowIdx = 0; rowIdx < items.length; rowIdx += 5) {
+      const row = items.slice(rowIdx, rowIdx + 5);
+      let rowContent = "";
 
-      for (const item of rowItems) {
+      for (const item of row) {
         const details = await getFurniDetails(item.name);
-        // Format: [Image] **Name** | Price | Stock
-        rowText += `[▫️](${details.icon}) **${details.name}**\n💰 ${details.price} | 📦 ${item.stock}\n\n`;
+        // Clean format: [image] Name | Price | Stock
+        rowContent += `[🖼️](${details.icon}) **${details.name}**\n💰 ${details.price} | 📦 Stock: ${item.stock}\n\n`;
       }
 
       embed.addFields({
-        name: i === 0 ? group.name : `${group.name} (continued)`,
-        value: rowText.trim(),
+        name: rowIdx === 0 ? group.name : `${group.name} (continued)`,
+        value: rowContent.trim(),
         inline: true
       });
     }
@@ -280,39 +283,39 @@ const client = new Client({
   ]
 });
 
-client.once("clientReady", async () => {
+client.once("ready", async () => {
   console.log(`✅ Gumball Bot online as ${client.user.tag}`);
   const guild = CONFIG.bot.guild_id ? client.guilds.cache.get(CONFIG.bot.guild_id) : null;
-  if (!guild) return console.error("❌ GUILD_ID missing or invalid");
+  if (!guild) return console.error("❌ Invalid GUILD_ID");
 
   const commands = [
-    new SlashCommandBuilder().setName("help").setDescription("Show all available commands"),
-    new SlashCommandBuilder().setName("balance").setDescription("Check your token balance & linked Habbo"),
-    new SlashCommandBuilder().setName("howtoplay").setDescription("View rates, rules & how to earn tokens"),
-    new SlashCommandBuilder().setName("showprizes").setDescription("View live stock, prices & images"),
-    new SlashCommandBuilder().setName("gumball").setDescription("Spin the machine for prizes (costs 1 Token)"),
-    new SlashCommandBuilder().setName("claim").setDescription("Claim a prize you won")
-      .addStringOption(o => o.setName("prize").setDescription("Exact name of the prize").setRequired(true)),
+    new SlashCommandBuilder().setName("help").setDescription("Show all commands"),
+    new SlashCommandBuilder().setName("balance").setDescription("Check your token balance"),
+    new SlashCommandBuilder().setName("howtoplay").setDescription("Earn rates & rules"),
+    new SlashCommandBuilder().setName("showprizes").setDescription("View stock, prices & images"),
+    new SlashCommandBuilder().setName("gumball").setDescription("Spin for prizes (1 Token)"),
+    new SlashCommandBuilder().setName("claim").setDescription("Claim your prize")
+      .addStringOption(o => o.setName("prize").setDescription("Prize name").setRequired(true)),
     new SlashCommandBuilder().setName("depositcoins").setDescription("Submit credit deposit")
-      .addIntegerOption(o => o.setName("amount").setDescription("Number of credits").setRequired(true)),
+      .addIntegerOption(o => o.setName("amount").setDescription("Credits amount").setRequired(true)),
     new SlashCommandBuilder().setName("depositfurni").setDescription("Submit furni deposit")
       .addIntegerOption(o => o.setName("quantity").setDescription("Total items").setRequired(true))
-      .addStringOption(o => o.setName("items").setDescription("List of furni names").setRequired(true)),
+      .addStringOption(o => o.setName("items").setDescription("List of items").setRequired(true)),
     new SlashCommandBuilder().setName("addstock").setDescription("Add items to stock")
       .addStringOption(o => o.setName("group").setDescription("blue/purple/green/lilac/golden").setRequired(true))
-      .addStringOption(o => o.setName("name").setDescription("Exact furni name").setRequired(true))
-      .addIntegerOption(o => o.setName("amount").setDescription("Quantity to add").setRequired(true))
-      .addBooleanOption(o => o.setName("force").setDescription("Add even if not found in APIs").setRequired(false))
-      .addStringOption(o => o.setName("image_url").setDescription("Optional: Custom image link").setRequired(false))
-      .addStringOption(o => o.setName("price").setDescription("Optional: Set custom price e.g. 25c").setRequired(false)),
+      .addStringOption(o => o.setName("name").setDescription("Furni name").setRequired(true))
+      .addIntegerOption(o => o.setName("amount").setDescription("Quantity").setRequired(true))
+      .addBooleanOption(o => o.setName("force").setDescription("Add even if not found").setRequired(false))
+      .addStringOption(o => o.setName("image_url").setDescription("Custom image (optional)").setRequired(false))
+      .addStringOption(o => o.setName("price").setDescription("Custom price (optional)").setRequired(false)),
     new SlashCommandBuilder().setName("removestock").setDescription("Remove items from stock")
-      .addStringOption(o => o.setName("group").setDescription("blue/purple/green/lilac/golden").setRequired(true))
-      .addStringOption(o => o.setName("name").setDescription("Exact furni name").setRequired(true))
-      .addIntegerOption(o => o.setName("amount").setDescription("Quantity to remove").setRequired(true)),
-    new SlashCommandBuilder().setName("addtokens").setDescription("Add tokens to a user")
+      .addStringOption(o => o.setName("group").setDescription("Rarity group").setRequired(true))
+      .addStringOption(o => o.setName("name").setDescription("Furni name").setRequired(true))
+      .addIntegerOption(o => o.setName("amount").setDescription("Quantity").setRequired(true)),
+    new SlashCommandBuilder().setName("addtokens").setDescription("Give tokens to user")
       .addUserOption(o => o.setName("user").setDescription("Target user").setRequired(true))
       .addIntegerOption(o => o.setName("amount").setDescription("Number of tokens").setRequired(true)),
-    new SlashCommandBuilder().setName("removetokens").setDescription("Remove tokens from a user")
+    new SlashCommandBuilder().setName("removetokens").setDescription("Take tokens from user")
       .addUserOption(o => o.setName("user").setDescription("Target user").setRequired(true))
       .addIntegerOption(o => o.setName("amount").setDescription("Number of tokens").setRequired(true))
   ];
@@ -325,7 +328,7 @@ client.once("clientReady", async () => {
 });
 
 // ==============================================
-// COMMAND & BUTTON HANDLERS
+// COMMAND HANDLERS
 // ==============================================
 client.on("interactionCreate", async interaction => {
   const isStaff = interaction.member?.permissions?.has(PermissionsBitField.Flags.ManageGuild) ||
@@ -338,31 +341,21 @@ client.on("interactionCreate", async interaction => {
       switch (interaction.commandName) {
         case "help": {
           return interaction.editReply({
-            content: `**📋 Gumball Bot Commands**
-**User Commands**
-\`/balance\` → Check your tokens & Habbo
-\`/howtoplay\` → See rates & rules
-\`/depositcoins\` → Submit credits
-\`/depositfurni\` → Submit furni
-\`/gumball\` → Spin for prizes
-\`/claim\` → Claim your prize
-\`/showprizes\` → View stock
-
-**Staff Commands**
-\`/addstock\` → Add items
-\`/removestock\` → Remove items
-\`/addtokens\` → Give tokens
-\`/removetokens\` → Take tokens
-`
+            content: `**📋 Commands**
+**User**
+\`/balance\` • \`/howtoplay\` • \`/depositcoins\` • \`/depositfurni\` • \`/gumball\` • \`/claim\` • \`/showprizes\`
+**Staff**
+\`/addstock\` • \`/removestock\` • \`/addtokens\` • \`/removetokens\``
           });
         }
 
         case "howtoplay": {
-          const embed = new EmbedBuilder()
-            .setTitle("📋 How To Play & Earn Tokens")
-            .setDescription(`• ${CONFIG.rates.credit_per_token} Credits = 1 Token\n• ${CONFIG.rates.furni_per_token} Furni = 1 Token\n• Deposit coins/furni to earn tokens\n• Go to our room: ${CONFIG.room_link}\n• Use \`/gumball\` to spin\n• Use \`/claim\` to receive your prize`)
-            .setColor("#3498db");
-          return interaction.editReply({ embeds: [embed] });
+          return interaction.editReply({
+            embeds: [new EmbedBuilder()
+              .setTitle("📋 How To Play")
+              .setDescription(`• ${CONFIG.rates.credit_per_token}c = 1 Token\n• ${CONFIG.rates.furni_per_token} Furni = 1 Token\n• Deposit to earn tokens\n• Spin & claim prizes!\nRoom: ${CONFIG.room_link}`)
+              .setColor("#3498db")]
+          });
         }
 
         case "showprizes": {
@@ -383,7 +376,7 @@ client.on("interactionCreate", async interaction => {
 
           const details = await getFurniDetails(inputName);
           if (!force && details.icon === CONFIG.default_image && details.price === "❌ No price data")
-            return interaction.editReply({ content: `⚠️ **"${inputName}"** not found. Use \`force: true\` to add.` });
+            return interaction.editReply({ content: `⚠️ **"${inputName}"** not found. Use \`force: true\`.` });
 
           if (customImage) details.icon = customImage;
           if (customPrice) details.price = customPrice;
@@ -424,7 +417,7 @@ client.on("interactionCreate", async interaction => {
 
         case "claim": {
           const habbo = await autoLinkVerified(interaction.member);
-          if (!habbo) return interaction.editReply({ content: "❌ Verify your account first" });
+          if (!habbo) return interaction.editReply({ content: "❌ Verify first" });
           const prize = interaction.options.getString("prize").trim();
 
           let found = false, prizeGroup = null;
@@ -433,32 +426,33 @@ client.on("interactionCreate", async interaction => {
             if (item) { item.stock--; found = true; prizeGroup = g; break; }
           }
 
-          if (!found) return interaction.editReply({ content: "❌ Prize out of stock or misspelled" });
+          if (!found) return interaction.editReply({ content: "❌ Not found or out of stock" });
 
           saveStock();
           await updateStockDisplay();
           const details = await getFurniDetails(prize);
           await sendLog("🏆 Prize Claimed", `**${habbo}** claimed **${prize}**`, "#f1c40f");
-          await sendDM(interaction.user, "✅ Claim Successful", `You claimed **${prize}**! A staff member will deliver it soon.`);
+          await sendDM(interaction.user, "✅ Claim Successful", `You got **${prize}**! Staff will deliver soon.`);
           return interaction.editReply({
             embeds: [new EmbedBuilder()
               .setTitle("✅ Claim Successful")
               .setThumbnail(details.icon)
-              .setDescription(`You claimed **${prize}**!\nHabbo: ${habbo}`)
+              .setDescription(`Prize: **${prize}**\nHabbo: ${habbo}`)
               .setColor("#2ecc71")]
           });
         }
 
         case "balance": {
           const habbo = await autoLinkVerified(interaction.member);
-          if (!habbo) return interaction.editReply({ content: "❌ Verify first" });
+          if (!habbo) return interaction.editReply({ content: "❌ Verify your account first" });
           const user = ensureUser(interaction.user.id);
-          const embed = new EmbedBuilder()
-            .setTitle("💰 Your Balance")
-            .setThumbnail(getAvatar(habbo))
-            .addFields({ name: "Tokens", value: `${user.balance}` }, { name: "Habbo", value: habbo })
-            .setColor("#2ecc71");
-          return interaction.editReply({ embeds: [embed] });
+          return interaction.editReply({
+            embeds: [new EmbedBuilder()
+              .setTitle("💰 Your Balance")
+              .setThumbnail(getAvatar(habbo))
+              .addFields({ name: "Tokens", value: `${user.balance}` }, { name: "Habbo", value: habbo })
+              .setColor("#2ecc71")]
+          });
         }
 
         case "gumball": {
@@ -469,7 +463,7 @@ client.on("interactionCreate", async interaction => {
           user.balance -= 1; saveData();
 
           const available = CONFIG.rarity_groups.filter(g => STOCK[g.id].some(i => i.stock > 0));
-          if (!available.length) { user.balance += 1; saveData(); return interaction.editReply({ content: "😕 No prizes — token refunded" }); }
+          if (!available.length) { user.balance += 1; saveData(); return interaction.editReply({ content: "😕 No prizes available — token refunded" }); }
 
           const group = available[Math.floor(Math.random() * available.length)];
           const items = STOCK[group.id].filter(i => i.stock > 0);
@@ -482,7 +476,7 @@ client.on("interactionCreate", async interaction => {
             .setThumbnail(details.icon)
             .setDescription(`**${prize.name}**\nRarity: ${group.name}\nPrice: ${details.price}\nNew Balance: ${user.balance}`)
             .setColor(group.color);
-          await sendDM(interaction.user, "🎉 You Won!", `Congratulations! You won **${prize.name}**!\nUse \`/claim ${prize.name}\` to receive it.`);
+          await sendDM(interaction.user, "🎉 You Won!", `You won **${prize.name}**! Use \`/claim ${prize.name}\` to receive it.`);
           return interaction.editReply({ embeds: [embed] });
         }
 
@@ -498,7 +492,7 @@ client.on("interactionCreate", async interaction => {
           const modEmbed = new EmbedBuilder()
             .setTitle("💸 New Credit Deposit")
             .setThumbnail(getAvatar(habbo))
-            .setDescription(`**User:** ${interaction.user.tag}\n**Habbo:** ${habbo}\n**Amount:** ${amount}c\n**Tokens to give:** ${tokens}`)
+            .setDescription(`**User:** ${interaction.user.tag}\n**Habbo:** ${habbo}\n**Amount:** ${amount}c\n**Tokens:** ${tokens}`)
             .setColor("#3498db");
 
           const row = new ActionRowBuilder().addComponents(
@@ -509,7 +503,7 @@ client.on("interactionCreate", async interaction => {
           const modCh = await client.channels.fetch(CONFIG.channels.mod_awareness).catch(() => null);
           if (modCh) await modCh.send({ content: `<@&${CONFIG.bot.admin_role_id}>`, embeds: [modEmbed], components: [row] });
 
-          return interaction.editReply({ content: `✅ Deposit submitted! ${amount}c = ${tokens} Tokens. Awaiting approval.` });
+          return interaction.editReply({ content: `✅ Deposit submitted! ${amount}c = ${tokens} Tokens.` });
         }
 
         case "depositfurni": {
@@ -525,7 +519,7 @@ client.on("interactionCreate", async interaction => {
           const modEmbed = new EmbedBuilder()
             .setTitle("📦 New Furni Deposit")
             .setThumbnail(getAvatar(habbo))
-            .setDescription(`**User:** ${interaction.user.tag}\n**Habbo:** ${habbo}\n**Items:** ${items}\n**Quantity:** ${quantity}\n**Tokens to give:** ${tokens}`)
+            .setDescription(`**User:** ${interaction.user.tag}\n**Habbo:** ${habbo}\n**Items:** ${items}\n**Quantity:** ${quantity}\n**Tokens:** ${tokens}`)
             .setColor("#9b59b6");
 
           const row = new ActionRowBuilder().addComponents(
@@ -536,7 +530,7 @@ client.on("interactionCreate", async interaction => {
           const modCh = await client.channels.fetch(CONFIG.channels.mod_awareness).catch(() => null);
           if (modCh) await modCh.send({ content: `<@&${CONFIG.bot.admin_role_id}>`, embeds: [modEmbed], components: [row] });
 
-          return interaction.editReply({ content: `✅ Deposit submitted! ${quantity} items = ${tokens} Tokens. Awaiting approval.` });
+          return interaction.editReply({ content: `✅ Deposit submitted! ${quantity} items = ${tokens} Tokens.` });
         }
 
         case "addtokens": {
@@ -587,7 +581,7 @@ client.on("interactionCreate", async interaction => {
         delete DATA.deposit_requests[userId];
         saveData();
         const user = await client.users.fetch(userId).catch(() => null);
-        if (user) await sendDM(user, "❌ Deposit Denied", `Your ${req.type} deposit was denied. Please check the rules.`);
+        if (user) await sendDM(user, "❌ Deposit Denied", `Your ${req.type} deposit was denied.`);
         await sendLog("❌ Deposit Denied", `**${req.habbo}** deposit rejected`, "#e74c3c");
         return interaction.update({ content: `❌ Denied`, embeds: [], components: [] });
       }

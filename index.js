@@ -133,7 +133,7 @@ async function getFurniDetails(furniName) {
   };
 
   try {
-    const res = await fetch(`https://habboapi.site/api/market/history?name=${encodeURIComponent(original)}&hotel=com`, { timeout: 2000 });
+    const res = await fetch(`https://habboapi.site/api/market/history?name=${encodeURIComponent(original)}&hotel=com`, { timeout: 2500 });
     if (res.ok) {
       const data = await res.json();
       const match = data.find(i => normalizeName(i.FurniName) === searchKey) || data[0];
@@ -282,7 +282,6 @@ async function buildSingleRarityDisplay(rarityId) {
   let desc = "**Prices:** Market Average\n\n";
   const attachments = [];
 
-  // Get details and image for EVERY item
   for (let i = 0; i < items.length; i++) {
     const details = await getFurniDetails(items[i].name);
     desc += `**${capitalizeWords(details.name)}**\n• Price: ${details.price}\n• Stock: ${items[i].stock}\n\n`;
@@ -685,6 +684,9 @@ Run \`/claim\` to get your item delivered!
         delete DATA.pending_claims[interaction.user.id];
         saveData();
 
+        const prizeDetails = await getFurniDetails(pending.prize);
+        const prizeAttachment = await getImageAttachment(prizeDetails.icon, `claim_${Date.now()}.png`);
+
         const confirmEmbed = new EmbedBuilder()
           .setTitle("✅ Claim Registered")
           .setDescription(`
@@ -696,18 +698,21 @@ A staff member will deliver this to you shortly.
           .setColor("#2ecc71")
           .setTimestamp();
 
+        // ✅ STAFF CLAIM NOTIFICATION — NOW WITH IMAGE
         const claimsEmbed = new EmbedBuilder()
           .setTitle("📦 New Claim Request")
+          .setThumbnail(`attachment://${prizeAttachment.name}`)
           .setDescription(`
 **User:** ${interaction.user.tag}
 **Habbo:** ${pending.habbo}
 **Prize:** ${capitalizeWords(pending.prize)}
+**Value:** ${prizeDetails.price}
           `)
           .setColor("#f39c12")
           .setTimestamp();
 
         const claimsCh = await client.channels.fetch(CONFIG.channels.claims).catch(() => null);
-        if (claimsCh) await claimsCh.send({ embeds: [claimsEmbed] });
+        if (claimsCh) await claimsCh.send({ embeds: [claimsEmbed], files: [prizeAttachment] });
 
         await sendLog("📥 Prize Claimed", `**${interaction.user.tag}** claimed **${pending.prize}**`, "#27ae60");
         return interaction.editReply({ embeds: [confirmEmbed] });

@@ -35,7 +35,6 @@ const CONFIG = {
     leaderboard: process.env.LEADERBOARD_CHANNEL_ID?.trim() || ""
   },
   habbo_assets_token: process.env.HABBO_ASSETS_TOKEN?.trim() || "",
-  habbofurni_token: process.env.HABBOFURNI_TOKEN?.trim() || "",
   habboapi_key: process.env.HABBOAPI_KEY?.trim() || "",
   room_link: "https://www.habbo.com/room/1234567",
   rates: {
@@ -43,7 +42,7 @@ const CONFIG = {
     credit_per_token: 3,
     furni_per_token: 20
   },
-  default_image: "https://i.imgur.com/9Z7X9QH.png",
+  default_image: "https://www.habboassets.com/assets/images/furniture/unknown.png",
   rarity_groups: [
     { id: "blue",   name: "🔵 BLUE RARITY",   color: "#3498db", weight: 53 },
     { id: "purple", name: "🟣 PURPLE RARITY", color: "#9b59b6", weight: 30 },
@@ -119,7 +118,7 @@ function parsePriceToCredits(priceStr) {
 }
 
 // ==============================================
-// FURNI DATA FETCH
+// FURNI DATA FETCH — HABBOASSETS FIRST
 // ==============================================
 async function getFurniDetails(furniName) {
   const original = furniName.trim();
@@ -129,6 +128,28 @@ async function getFurniDetails(furniName) {
   let price = "❌ No price data";
   let matchedName = original;
 
+  // 1. HABBOASSETS API (medium size image)
+  if (CONFIG.habbo_assets_token) {
+    try {
+      const res = await fetch(`https://www.habboassets.com/api/search?q=${encodeURIComponent(original)}&limit=5`, {
+        headers: { Authorization: `Bearer ${CONFIG.habbo_assets_token}` },
+        timeout: 5000
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.items?.length > 0) {
+          const best = data.items.find(i => normalizeName(i.name) === searchKey) || data.items[0];
+          if (best) {
+            matchedName = best.name;
+            // Medium size image
+            iconUrl = best.image_url || best.icon_url || best.medium_url || best.large_url || CONFIG.default_image;
+          }
+        }
+      }
+    } catch {}
+  }
+
+  // 2. HABBOAPI for market price
   try {
     const headers = { "Accept": "application/json" };
     if (CONFIG.habboapi_key) headers["X-Auth-Key"] = CONFIG.habboapi_key;
@@ -144,30 +165,16 @@ async function getFurniDetails(furniName) {
         if (best) {
           matchedName = best.FurniName;
           if (best.marketData?.averagePrice) price = `${best.marketData.averagePrice}c`;
-          iconUrl = `https://habboapi.site/api/image/${best.ClassName}`;
+          if (iconUrl === CONFIG.default_image) iconUrl = `https://habboapi.site/api/image/${best.ClassName}`;
         }
       }
     }
   } catch {}
 
-  if (iconUrl === CONFIG.default_image && CONFIG.habbo_assets_token) {
-    try {
-      const res = await fetch(`https://habboassets.com/api/search?q=${encodeURIComponent(original)}&limit=10`, {
-        headers: { Authorization: `Bearer ${CONFIG.habbo_assets_token}` }, timeout: 4000
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.items?.length > 0) {
-          const best = data.items.find(i => normalizeName(i.name) === searchKey) || data.items[0];
-          if (best) { iconUrl = best.image_url || best.icon_url; matchedName = best.name; }
-        }
-      }
-    } catch {}
-  }
-
+  // 3. Fallback price from FurniEye
   if (price === "❌ No price data") {
     try {
-      const res = await fetch(`https://www.furnieye.com/api/search?q=${encodeURIComponent(original)}&limit=10`, { timeout: 4000 });
+      const res = await fetch(`https://www.furnieye.com/api/search?q=${encodeURIComponent(original)}&limit=5`, { timeout: 4000 });
       if (res.ok) {
         const data = await res.json();
         if (data.results?.length > 0) {
@@ -274,7 +281,7 @@ async function updateLeaderboard() {
 }
 
 // ==============================================
-// STOCK DISPLAY
+// STOCK DISPLAY — FORMATTED AS REQUESTED
 // ==============================================
 async function buildStockEmbed() {
   const embed = new EmbedBuilder()
@@ -288,22 +295,35 @@ async function buildStockEmbed() {
     const totalStock = items.reduce((sum, item) => sum + item.stock, 0);
 
     if (totalStock === 0) {
-      embed.addFields({ name: group.name, value: "> No items currently in stock", inline: false });
+      embed.addFields({
+        name: group.name,
+        value: "> No items currently in stock",
+        inline: false
+      });
       continue;
     }
 
     let groupContent = "";
     for (const item of items) {
       const details = await getFurniDetails(item.name);
-      groupContent += `**${details.name}**\n💰 ${details.price} | 📦 Stock: ${item.stock}\n\n`;
+      groupContent += `**${details.name}**\n💰 Market Price: ${details.price} | 📦 In Stock: ${item.stock}\n\n`;
     }
-    groupContent += `**Total in this group: ${totalStock} items**`;
 
-    embed.addFields({ name: group.name, value: groupContent.trim(), inline: false });
+    groupContent += `**Total in ${group.name.replace("🔵 ", "").replace("🟣 ", "").replace("🟢 ", "").replace("💜 ", "").replace("🟡 ", "")}: ${totalStock} items**`;
+
+    embed.addFields({
+      name: group.name,
+      value: groupContent.trim(),
+      inline: false
+    });
   }
 
   const firstItem = Object.values(STOCK).flat().find(i => i.stock > 0);
-  if (firstItem) embed.setThumbnail((await getFurniDetails(firstItem.name)).icon);
+  if (firstItem) {
+    const firstDetails = await getFurniDetails(firstItem.name);
+    embed.setThumbnail(firstDetails.icon);
+  }
+
   return embed;
 }
 
@@ -598,10 +618,11 @@ client.on("interactionCreate", async interaction => {
           };
           saveData();
 
+          // 🎉 WIN DISPLAY — shows image, name, value clearly
           const winEmbed = new EmbedBuilder()
             .setTitle("🎉 YOU WON!")
             .setThumbnail(details.icon)
-            .setDescription(`**Prize Category:** ${drawnGroup.name}\n**Prize:** ${prize.name}\n**Value:** ${details.price}\n\nUse \`/claim ${prize.name}\` to receive your prize!`)
+            .setDescription(`**Category:** ${drawnGroup.name}\n**Item:** ${details.name}\n**Market Value:** ${details.price}\n\nUse \`/claim prize:${prize.name}\` to receive your prize!`)
             .setColor(drawnGroup.color)
             .setTimestamp();
 
@@ -612,7 +633,7 @@ client.on("interactionCreate", async interaction => {
             drawnGroup.color, true
           );
 
-          await sendDM(interaction.user, "🎉 You Won a Prize!", `Congratulations! You won **${prize.name}** from the ${drawnGroup.name} category. Use \`/claim ${prize.name}\` to get it delivered.`);
+          await sendDM(interaction.user, "🎉 You Won a Prize!", `Congratulations! You won **${prize.name}** (${details.price}) from the ${drawnGroup.name} category. Use \`/claim\` to get it delivered.`);
           return;
         }
 

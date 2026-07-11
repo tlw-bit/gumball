@@ -11,7 +11,8 @@ const {
   PermissionsBitField,
   ModalBuilder,
   TextInputBuilder,
-  TextInputStyle
+  TextInputStyle,
+  MessageFlags
 } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
@@ -19,7 +20,7 @@ const cron = require('node-cron');
 const fetch = require('node-fetch');
 
 // ==============================================
-// CONFIGURATION — SAFE DEFAULTS ADDED
+// CONFIGURATION
 // ==============================================
 const CONFIG = {
   bot: {
@@ -101,7 +102,7 @@ async function getFurniDetails(furniName) {
   let avgPrice = "❌ No price data";
 
   try {
-    const res = await fetch(`https://habbofurni.com/api/v1/furniture/${safeName}`, { timeout: 4000 });
+    const res = await fetch(`https://habbofurni.com/api/v1/furniture/${safeName}`, { timeout: 3000 });
     if (res.ok) {
       const data = await res.json();
       if (data && data.image) {
@@ -109,10 +110,10 @@ async function getFurniDetails(furniName) {
         exists = true;
       }
     }
-  } catch (err) { /* ignore */ }
+  } catch (err) { /* ignore slow API */ }
 
   try {
-    const res = await fetch(`https://www.furnieye.com/api/search?q=${encodeURIComponent(furniName)}`, { timeout: 5000 });
+    const res = await fetch(`https://www.furnieye.com/api/search?q=${encodeURIComponent(furniName)}`, { timeout: 3000 });
     if (res.ok) {
       const data = await res.json();
       if (data.results?.length > 0) {
@@ -123,7 +124,7 @@ async function getFurniDetails(furniName) {
         }
       }
     }
-  } catch (err) { /* ignore */ }
+  } catch (err) { /* ignore slow API */ }
 
   return { icon: iconUrl, price: avgPrice, exists: exists };
 }
@@ -214,7 +215,7 @@ async function sendDM(user, title, message, color = "#2ecc71") {
 }
 
 // ==============================================
-// BOT SETUP — WARNING FIXED
+// BOT SETUP
 // ==============================================
 const client = new Client({
   intents: [
@@ -225,13 +226,11 @@ const client = new Client({
   ]
 });
 
-// ✅ Fixed: Use clientReady instead of ready
 client.once("clientReady", async () => {
   console.log(`✅ Gumball Bot online as ${client.user.tag}`);
   const guild = CONFIG.bot.guild_id ? client.guilds.cache.get(CONFIG.bot.guild_id) : null;
   if (!guild) return console.error("❌ GUILD_ID missing or invalid in .env");
 
-  // ✅ All commands have descriptions — no undefined
   const commands = [
     new SlashCommandBuilder().setName("help").setDescription("Show all available commands"),
     new SlashCommandBuilder().setName("balance").setDescription("Check your token balance & linked Habbo"),
@@ -269,7 +268,7 @@ client.once("clientReady", async () => {
 });
 
 // ==============================================
-// INTERACTION HANDLING
+// INTERACTION HANDLING — FIXED TIMEOUT & FLAGS
 // ==============================================
 client.on("interactionCreate", async interaction => {
   const isStaff = interaction.member?.permissions?.has(PermissionsBitField.Flags.ManageGuild) ||
@@ -277,99 +276,110 @@ client.on("interactionCreate", async interaction => {
 
   try {
     if (interaction.isChatInputCommand()) {
+      // ✅ DEFER ALL COMMANDS to avoid timeout
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
       switch (interaction.commandName) {
 
-        case "howtoplay":
-          return interaction.reply({
-            embeds: [new EmbedBuilder()
-              .setTitle("📋 How To Play & Earn Tokens")
-              .setDescription(`• ${CONFIG.rates.credit_per_token} Credits = 1 Token\n• ${CONFIG.rates.furni_per_token} Furni = 1 Token\n• Deposit coins/furni to earn tokens\n• \`/gumball\` to spin\n• \`/claim\` to receive your prize`)
-              .setColor("#3498db")]
-          });
+        case "howtoplay": {
+          const embed = new EmbedBuilder()
+            .setTitle("📋 How To Play & Earn Tokens")
+            .setDescription(`• ${CONFIG.rates.credit_per_token} Credits = 1 Token\n• ${CONFIG.rates.furni_per_token} Furni = 1 Token\n• Deposit coins/furni to earn tokens\n• \`/gumball\` to spin\n• \`/claim\` to receive your prize`)
+            .setColor("#3498db");
+          return interaction.editReply({ embeds: [embed] });
+        }
 
-        case "showprizes":
-          return interaction.reply({ embeds: [await buildStockEmbed()] });
+        case "showprizes": {
+          const embed = await buildStockEmbed();
+          return interaction.editReply({ embeds: [embed], flags: 0 }); // Public, not ephemeral
+        }
 
         case "addstock": {
-          if (!isStaff) return interaction.reply({ content: "❌ No permission", ephemeral: true });
+          if (!isStaff) return interaction.editReply({ content: "❌ No permission" });
           const group = interaction.options.getString("group").toLowerCase();
           const name = interaction.options.getString("name").trim();
           const amount = interaction.options.getInteger("amount");
 
           if (!STOCK.hasOwnProperty(group))
-            return interaction.reply({ content: "❌ Use: blue / purple / green / lilac / golden", ephemeral: true });
+            return interaction.editReply({ content: "❌ Use: blue / purple / green / lilac / golden" });
 
           const details = await getFurniDetails(name);
           if (!details.exists)
-            return interaction.reply({ content: `⚠️ **"${name}" not found — NOT added to stock.** Check spelling.`, ephemeral: true });
+            return interaction.editReply({ content: `⚠️ **"${name}" not found — NOT added to stock.** Check spelling.` });
 
           const existing = STOCK[group].find(i => i.name.toLowerCase() === name.toLowerCase());
           existing ? existing.stock += amount : STOCK[group].push({ name, stock: amount });
           saveStock();
           await updateStockDisplay();
           await sendLog("✅ Stock Added", `**${name}** x${amount} → ${group}`, "#27ae60");
-          return interaction.reply({ content: `✅ Added **${amount}x ${name}**\n💰 ${details.price}`, ephemeral: true });
+          return interaction.editReply({ content: `✅ Added **${amount}x ${name}**\n💰 ${details.price}` });
         }
 
         case "removestock": {
-          if (!isStaff) return interaction.reply({ content: "❌ No permission", ephemeral: true });
+          if (!isStaff) return interaction.editReply({ content: "❌ No permission" });
           const group = interaction.options.getString("group").toLowerCase();
           const name = interaction.options.getString("name").trim();
           const amount = interaction.options.getInteger("amount");
 
           const idx = STOCK[group].findIndex(i => i.name.toLowerCase() === name.toLowerCase());
-          if (idx === -1) return interaction.reply({ content: "❌ Item not found", ephemeral: true });
+          if (idx === -1) return interaction.editReply({ content: "❌ Item not found" });
 
           STOCK[group][idx].stock -= amount;
           if (STOCK[group][idx].stock <= 0) STOCK[group].splice(idx, 1);
           saveStock();
           await updateStockDisplay();
           await sendLog("📤 Stock Removed", `**${name}** -${amount} from ${group}`, "#e67e22");
-          return interaction.reply({ content: `✅ Removed **${amount}x ${name}**`, ephemeral: true });
+          return interaction.editReply({ content: `✅ Removed **${amount}x ${name}**` });
         }
 
         case "claim": {
           const habbo = await autoLinkVerified(interaction.member);
-          if (!habbo) return interaction.reply({ content: "❌ Verify your account first", ephemeral: true });
+          if (!habbo) return interaction.editReply({ content: "❌ Verify your account first" });
           const prize = interaction.options.getString("prize").trim();
 
           let found = false;
+          let prizeGroup = null;
           for (const g of CONFIG.rarity_groups) {
             const item = STOCK[g.id].find(i => i.name.toLowerCase() === prize.toLowerCase() && i.stock > 0);
-            if (item) { item.stock--; found = true; break; }
+            if (item) { item.stock--; found = true; prizeGroup = g; break; }
           }
 
-          if (!found) return interaction.reply({ content: "❌ Prize out of stock or misspelled", ephemeral: true });
+          if (!found) return interaction.editReply({ content: "❌ Prize out of stock or misspelled" });
 
           saveStock();
           await updateStockDisplay();
           const details = await getFurniDetails(prize);
           await sendLog("🏆 Prize Claimed", `**${habbo}** claimed **${prize}**`, "#f1c40f");
-          return interaction.reply({
+          return interaction.editReply({
             embeds: [new EmbedBuilder()
               .setTitle("✅ Claim Successful")
               .setThumbnail(details.icon)
-              .setDescription(`You claimed **${prize}**!\nRemaining stock: ${STOCK[Object.keys(STOCK).find(k => STOCK[k].some(i => i.name === prize))]?.find(i => i.name === prize)?.stock || 0}`)
+              .setDescription(`You claimed **${prize}**!\nRemaining stock: ${STOCK[prizeGroup.id].find(i => i.name === prize)?.stock || 0}`)
               .setColor("#2ecc71")]
           });
         }
 
         case "balance": {
           const habbo = await autoLinkVerified(interaction.member);
-          if (!habbo) return interaction.reply({ content: "❌ Verify first", ephemeral: true });
+          if (!habbo) return interaction.editReply({ content: "❌ Verify first" });
           const user = ensureUser(interaction.user.id);
-          return interaction.reply({ embeds: [new EmbedBuilder().setTitle("💰 Your Balance").setThumbnail(getAvatar(habbo)).addFields({ name: "Tokens", value: `${user.balance}` }, { name: "Habbo", value: habbo }).setColor("#2ecc71")], ephemeral: true });
+          const embed = new EmbedBuilder()
+            .setTitle("💰 Your Balance")
+            .setThumbnail(getAvatar(habbo))
+            .addFields({ name: "Tokens", value: `${user.balance}` }, { name: "Habbo", value: habbo })
+            .setColor("#2ecc71");
+          return interaction.editReply({ embeds: [embed] });
         }
 
         case "gumball": {
           const habbo = await autoLinkVerified(interaction.member);
-          if (!habbo) return interaction.reply({ content: "❌ Verify first", ephemeral: true });
+          if (!habbo) return interaction.editReply({ content: "❌ Verify first" });
           const user = ensureUser(interaction.user.id);
-          if (user.balance < 1) return interaction.reply({ content: "❌ Need 1 Token to play", ephemeral: true });
+          if (user.balance < 1) return interaction.editReply({ content: "❌ Need 1 Token to play" });
           user.balance -= 1; saveData();
 
           const available = CONFIG.rarity_groups.filter(g => STOCK[g.id].some(i => i.stock > 0));
-          if (!available.length) { user.balance += 1; saveData(); return interaction.reply({ content: "😕 No prizes — token refunded", ephemeral: true }); }
+          if (!available.length) { user.balance += 1; saveData(); return interaction.editReply({ content: "😕 No prizes — token refunded" }); }
 
           const group = available[Math.floor(Math.random() * available.length)];
           const items = STOCK[group.id].filter(i => i.stock > 0);
@@ -377,42 +387,49 @@ client.on("interactionCreate", async interaction => {
           prize.stock--; saveStock(); await updateStockDisplay();
 
           const details = await getFurniDetails(prize.name);
-          return interaction.reply({
-            embeds: [new EmbedBuilder()
-              .setTitle("🎉 YOU WON!")
-              .setThumbnail(details.icon)
-              .setDescription(`**${prize.name}**\nRarity: ${group.name}\nPrice: ${details.price}\nNew Balance: ${user.balance}`)
-              .setColor(group.color)]
-          });
+          const embed = new EmbedBuilder()
+            .setTitle("🎉 YOU WON!")
+            .setThumbnail(details.icon)
+            .setDescription(`**${prize.name}**\nRarity: ${group.name}\nPrice: ${details.price}\nNew Balance: ${user.balance}`)
+            .setColor(group.color);
+          return interaction.editReply({ embeds: [embed] });
         }
 
         case "addtokens": {
-          if (!isStaff) return interaction.reply({ content: "❌ No permission", ephemeral: true });
+          if (!isStaff) return interaction.editReply({ content: "❌ No permission" });
           const target = interaction.options.getUser("user");
           const amount = interaction.options.getInteger("amount");
           ensureUser(target.id).balance += amount;
           addToHistory(target.id, "Tokens Added", `+${amount} by ${interaction.user.tag}`);
           saveData();
           await sendLog("➕ Tokens Added", `**${target.tag}**: +${amount}`, "#2ecc71");
-          return interaction.reply({ content: `✅ Added ${amount} tokens to ${target}`, ephemeral: true });
+          return interaction.editReply({ content: `✅ Added ${amount} tokens to ${target}` });
         }
 
         case "removetokens": {
-          if (!isStaff) return interaction.reply({ content: "❌ No permission", ephemeral: true });
+          if (!isStaff) return interaction.editReply({ content: "❌ No permission" });
           const target = interaction.options.getUser("user");
           const amount = interaction.options.getInteger("amount");
           ensureUser(target.id).balance = Math.max(0, ensureUser(target.id).balance - amount);
           addToHistory(target.id, "Tokens Removed", `-${amount} by ${interaction.user.tag}`);
           saveData();
           await sendLog("➖ Tokens Removed", `**${target.tag}**: -${amount}`, "#e74c3c");
-          return interaction.reply({ content: `✅ Removed ${amount} tokens from ${target}`, ephemeral: true });
+          return interaction.editReply({ content: `✅ Removed ${amount} tokens from ${target}` });
         }
 
+        default:
+          return interaction.editReply({ content: "❌ Command not found" });
       }
     }
   } catch (err) {
     console.error("❌ Error:", err);
-    if (!interaction.replied) interaction.reply({ content: "❌ Something went wrong", ephemeral: true }).catch(() => {});
+    if (!interaction.replied && !interaction.deferred) {
+      try { await interaction.reply({ content: "❌ Something went wrong", flags: MessageFlags.Ephemeral }); }
+      catch { /* ignore closed interaction */ }
+    } else if (interaction.deferred) {
+      try { await interaction.editReply({ content: "❌ Something went wrong" }); }
+      catch { /* ignore */ }
+    }
   }
 });
 

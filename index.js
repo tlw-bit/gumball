@@ -287,33 +287,49 @@ async function buildStockEmbeds() {
     const items = STOCK[group.id].filter(i => i.stock > 0);
     const totalStock = items.reduce((sum, item) => sum + item.stock, 0);
 
-    let desc = "**Prices:** Market Average — final value may vary due to tax/fees\n\n";
+    const embed = new EmbedBuilder()
+      .setTitle(group.name)
+      .setColor(group.color)
+      .setDescription("**Prices:** Market Average — final value may vary due to tax/fees")
+      .setTimestamp();
 
     if (totalStock === 0) {
-      desc += "> No items currently in stock";
+      embed.setDescription("**Prices:** Market Average — final value may vary due to tax/fees
+
+> No items currently in stock");
     } else {
-      for (const item of items) {
+      // Build the embed with 5 items per row
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
         const details = await getFurniDetails(item.name);
-        // Use Discord's supported image format for embeds
-        desc += `**${details.name}**\nMarket Avg: ${details.price} | Stock: ${item.stock}\n`;
-        // Add image using the only working method in embed descriptions
-        desc += `[⠀](${details.icon})\n\n`;
+
+        // Add the item's name and image as a single inline field
+        embed.addFields({
+          name: `**${details.name}**`,
+          value: `[View Image](${details.icon})`,
+          inline: true
+        });
+
+        // Add the price and stock as a second inline field
+        embed.addFields({
+          name: "\u200B",
+          value: `Market Avg: ${details.price} | Stock: ${item.stock}`,
+          inline: true
+        });
+
+        // Add a small spacer to keep the 5-item row format
+        if ((i + 1) % 5 === 0) {
+          embed.addFields({ name: "\u200B", value: "\u200B", inline: true });
+        }
       }
     }
 
-    embeds.push(
-      new EmbedBuilder()
-        .setTitle(group.name)
-        .setColor(group.color)
-        .setDescription(desc)
-        .setFooter({ text: `Total in category: ${totalStock} items • Updated every 15 mins` })
-        .setTimestamp()
-    );
+    embed.setFooter({ text: `Total in category: ${totalStock} items • Updated every 15 mins` });
+    embeds.push(embed);
   }
 
   return embeds;
 }
-
 // ==============================================
 // OTHER HELPERS
 // ==============================================

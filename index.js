@@ -14,7 +14,7 @@ const cron = require('node-cron');
 const fetch = require('node-fetch');
 
 // ==============================================
-// CONFIGURATION
+// CONFIGURATION — NOW WITH HABBOFURNI API
 // ==============================================
 const CONFIG = {
   bot: {
@@ -28,6 +28,8 @@ const CONFIG = {
     stock_display: process.env.STOCK_DISPLAY_CHANNEL_ID || ""
   },
   habbo_assets_token: process.env.HABBO_ASSETS_TOKEN || "",
+  habbofurni_token: process.env.HABBOFURNI_TOKEN || "",
+  default_image: "https://i.imgur.com/9Z7X9QH.png",
   rarity_groups: [
     { id: "blue", name: "🔵 BLUE RARITY", color: "#3498db" },
     { id: "purple", name: "🟣 PURPLE RARITY", color: "#9b59b6" },
@@ -56,71 +58,87 @@ function saveData() { fs.writeFileSync(DATA_PATH, JSON.stringify(DATA, null, 2))
 // HELPER: Normalize names for matching
 // ==============================================
 function normalizeName(str) {
-  return str.trim().toLowerCase().replace(/[-_ '"]+/g, '');
+  return str.trim().toLowerCase().replace(/[-_ '".]/g, '');
 }
 
 // ==============================================
-// FURNI LOOKUP — MORE FLEXIBLE LOGIC
+// FURNI LOOKUP — CORRECT HABBOFURNI API
 // ==============================================
 async function getFurniDetails(furniName) {
-  const originalName = furniName.trim();
-  const searchKey = normalizeName(originalName);
+  const original = furniName.trim();
+  const searchKey = normalizeName(original);
 
-  let iconUrl = "https://i.imgur.com/9Z7X9QH.png";
-  let exists = false;
+  let iconUrl = CONFIG.default_image;
   let price = "❌ No price data";
-  let matchedName = originalName;
+  let matchedName = original;
 
-  // 1. Try Habbo Assets first
+  // --- 1. Habbo Assets first ---
   if (CONFIG.habbo_assets_token) {
     try {
-      const res = await fetch(`https://habboassets.com/api/search?q=${encodeURIComponent(originalName)}&limit=15`, {
+      const res = await fetch(`https://habboassets.com/api/search?q=${encodeURIComponent(original)}&limit=20`, {
         headers: { Authorization: `Bearer ${CONFIG.habbo_assets_token}` },
-        timeout: 4000
+        timeout: 5000
       });
       if (res.ok) {
         const data = await res.json();
-        let match = data.items?.find(i => normalizeName(i.name) === searchKey);
-        if (!match) match = data.items?.find(i => normalizeName(i.name).includes(searchKey));
-        if (match) {
-          iconUrl = match.image_url || match.icon_url;
-          matchedName = match.name;
-          exists = true;
+        if (data.items?.length > 0) {
+          let best = data.items.find(i => normalizeName(i.name) === searchKey);
+          if (!best) best = data.items.find(i => normalizeName(i.name).includes(searchKey));
+          if (!best) best = data.items[0];
+          if (best) {
+            iconUrl = best.image_url || best.icon_url || CONFIG.default_image;
+            matchedName = best.name;
+          }
         }
       }
     } catch {}
   }
 
-  // 2. Fallback to Habbofurni
-  if (!exists) {
-    const safeName = originalName.toLowerCase().replace(/ /g, "_").replace(/'/g, "").replace(/&/g, "and").replace(/-/g, "_");
+  // --- 2. Habbofurni API (CORRECT OFFICIAL METHOD) ---
+  if (iconUrl === CONFIG.default_image && CONFIG.habbofurni_token) {
     try {
-      const res = await fetch(`https://habbofurni.com/api/v1/furniture/${safeName}`, { timeout: 3000 });
+      const res = await fetch(`https://habbofurni.com/api/v1/furniture?search=${encodeURIComponent(original)}&per_page=10`, {
+        headers: {
+          Authorization: `Bearer ${CONFIG.habbofurni_token}`,
+          "X-Hotel-ID": "1",
+          Accept: "application/json"
+        },
+        timeout: 5000
+      });
       if (res.ok) {
         const data = await res.json();
-        if (data?.image) {
-          iconUrl = data.image;
-          exists = true;
+        if (data.data?.length > 0) {
+          let best = data.data.find(item => normalizeName(item.hotelData.name) === searchKey);
+          if (!best) best = data.data.find(item => normalizeName(item.hotelData.name).includes(searchKey));
+          if (!best) best = data.data[0];
+          if (best?.hotelData?.icon?.url) {
+            iconUrl = best.hotelData.icon.url;
+            matchedName = best.hotelData.name;
+          }
         }
       }
     } catch {}
   }
 
-  // 3. Get price from FurniEye — if we get a price, treat as "found"
+  // --- 3. FurniEye for prices only ---
   try {
-    const res = await fetch(`https://www.furnieye.com/api/search?q=${encodeURIComponent(originalName)}`, { timeout: 3000 });
+    const res = await fetch(`https://www.furnieye.com/api/search?q=${encodeURIComponent(original)}&limit=15`, {
+      timeout: 5000
+    });
     if (res.ok) {
       const data = await res.json();
-      let match = data.results?.find(i => normalizeName(i.name) === searchKey);
-      if (!match) match = data.results?.find(i => normalizeName(i.name).includes(searchKey));
-      if (match?.average_price != null) {
-        price = `${match.average_price}c`;
-        if (!exists) exists = true; // ✅ Price found = valid item
+      if (data.results?.length > 0) {
+        let best = data.results.find(i => normalizeName(i.name) === searchKey);
+        if (!best) best = data.results.find(i => normalizeName(i.name).includes(searchKey));
+        if (!best) best = data.results[0];
+        if (best?.average_price != null) {
+          price = `${best.average_price}c`;
+        }
       }
     }
   } catch {}
 
-  return { icon: iconUrl, price, exists, name: matchedName };
+  return { icon: iconUrl, price, name: matchedName };
 }
 
 // ==============================================
@@ -129,7 +147,7 @@ async function getFurniDetails(furniName) {
 async function buildStockEmbed() {
   const embed = new EmbedBuilder()
     .setTitle("🎁 Available Prizes & Stock")
-    .setDescription("Grouped by rarity • 5 items per row\n*Images: Habbo Assets • Prices: FurniEye*")
+    .setDescription("Grouped by rarity • 5 items per row\n*Images: Habbo Assets + Habbofurni • Prices: FurniEye*")
     .setColor("#7289da")
     .setTimestamp();
 
@@ -185,11 +203,10 @@ client.once("clientReady", async () => {
 
   const commands = [
     new SlashCommandBuilder().setName("showprizes").setDescription("View live stock, prices and images"),
-    new SlashCommandBuilder().setName("addstock").setDescription("Add items to stock")
+    new SlashCommandBuilder().setName("addstock").setDescription("Add items — auto-finds image & price")
       .addStringOption(o => o.setName("group").setDescription("blue / purple / green / lilac / golden").setRequired(true))
       .addStringOption(o => o.setName("name").setDescription("Furni name").setRequired(true))
-      .addIntegerOption(o => o.setName("amount").setDescription("Quantity to add").setRequired(true))
-      .addBooleanOption(o => o.setName("force").setDescription("Add even if not found in APIs").setRequired(false)), // ✅ NEW FORCE OPTION
+      .addIntegerOption(o => o.setName("amount").setDescription("Quantity to add").setRequired(true)),
     new SlashCommandBuilder().setName("removestock").setDescription("Remove items from stock")
       .addStringOption(o => o.setName("group").setDescription("blue / purple / green / lilac / golden").setRequired(true))
       .addStringOption(o => o.setName("name").setDescription("Furni name").setRequired(true))
@@ -218,23 +235,15 @@ client.on("interactionCreate", async int => {
         return int.editReply({ embeds: [await buildStockEmbed()], flags: 0 });
 
       case "addstock": {
-        if (!isStaff) return int.editReply({ content: "❌ You don't have permission to do this." });
+        if (!isStaff) return int.editReply({ content: "❌ No permission" });
         const group = int.options.getString("group").toLowerCase();
         const inputName = int.options.getString("name");
         const amount = int.options.getInteger("amount");
-        const force = int.options.getBoolean("force") || false; // ✅ Read force flag
 
         if (!STOCK.hasOwnProperty(group))
-          return int.editReply({ content: "❌ Invalid group. Use: blue / purple / green / lilac / golden" });
+          return int.editReply({ content: "❌ Use: blue / purple / green / lilac / golden" });
 
         const details = await getFurniDetails(inputName);
-
-        // ✅ Allow adding if force = true OR item was found
-        if (!details.exists && !force) {
-          return int.editReply({ 
-            content: `⚠️ **"${inputName}"** could not be found.\nUse \`force: true\` to add it anyway.` 
-          });
-        }
 
         const searchKey = normalizeName(details.name);
         const existing = STOCK[group].find(i => normalizeName(i.name) === searchKey);
@@ -248,12 +257,12 @@ client.on("interactionCreate", async int => {
         saveStock();
         await updateStockDisplay();
         return int.editReply({
-          content: `✅ Added **${amount}x ${details.name}**\n💰 Price: ${details.price}\n${force ? "⚠️ Added manually (no API match)" : ""}`
+          content: `✅ Added **${amount}x ${details.name}**\n🖼️ Image: Auto-fetched\n💰 Price: ${details.price}`
         });
       }
 
       case "removestock": {
-        if (!isStaff) return int.editReply({ content: "❌ You don't have permission to do this." });
+        if (!isStaff) return int.editReply({ content: "❌ No permission" });
         const group = int.options.getString("group").toLowerCase();
         const inputName = int.options.getString("name");
         const amount = int.options.getInteger("amount");
@@ -261,18 +270,13 @@ client.on("interactionCreate", async int => {
         const searchKey = normalizeName(inputName);
         const idx = STOCK[group].findIndex(i => normalizeName(i.name) === searchKey);
         if (idx === -1)
-          return int.editReply({ content: `❌ Item **"${inputName}"** not found in stock.` });
+          return int.editReply({ content: `❌ **"${inputName}"** not found in stock` });
 
         STOCK[group][idx].stock -= amount;
-        if (STOCK[group][idx].stock <= 0) {
-          STOCK[group].splice(idx, 1);
-        }
-
+        if (STOCK[group][idx].stock <= 0) STOCK[group].splice(idx, 1);
         saveStock();
         await updateStockDisplay();
-        return int.editReply({
-          content: `✅ Removed **${amount}x ${STOCK[group][idx]?.name || inputName}**`
-        });
+        return int.editReply({ content: `✅ Removed **${amount}x ${STOCK[group][idx]?.name || inputName}**` });
       }
     }
   } catch (err) {

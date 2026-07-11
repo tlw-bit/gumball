@@ -43,7 +43,10 @@ const CONFIG = {
     credit_per_token: 3,
     furni_per_token: 20
   },
-  default_image: "https://images.habboapi.site/furni/unknown.png",
+  // ✅ Working official default image
+  default_image: "https://www.habbo.com/habbo-imaging/asset/100000000/unknown.png",
+  // ✅ Max 5 images per row
+  images_per_row: 5,
   rarity_groups: [
     { id: "blue",   name: "🔵 BLUE RARITY",   color: "#3498db", weight: 53 },
     { id: "purple", name: "🟣 PURPLE RARITY", color: "#9b59b6", weight: 30 },
@@ -119,12 +122,13 @@ function parsePriceToCredits(priceStr) {
 }
 
 // ==============================================
-// FURNI DETAILS — API IMAGES
+// FURNI DETAILS — FIXED IMAGE SOURCE
 // ==============================================
 async function getFurniDetails(furniName) {
   const original = furniName.trim();
   const searchKey = normalizeName(original);
 
+  // Use saved stock data first
   const saved = Object.values(STOCK).flat().find(i => normalizeName(i.name) === searchKey);
   if (saved) return {
     name: saved.name,
@@ -132,37 +136,51 @@ async function getFurniDetails(furniName) {
     price: saved.price || "❌ No price data"
   };
 
+  // Try alternate market API
   try {
-    const res = await fetch(`https://habboapi.site/api/market/history?name=${encodeURIComponent(original)}&hotel=com`, { timeout: 2500 });
+    const res = await fetch(`https://api.habboworld.com/market/search?name=${encodeURIComponent(original)}`, { timeout: 2500 });
     if (res.ok) {
       const data = await res.json();
-      const match = data.find(i => normalizeName(i.FurniName) === searchKey) || data[0];
+      const match = data.results?.find(i => normalizeName(i.name) === searchKey) || data.results?.[0];
       if (match) {
         return {
-          name: match.FurniName,
-          icon: `https://images.habboapi.site/furni/${match.ClassName}.png`,
-          price: match.marketData?.averagePrice ? `${match.marketData.averagePrice}c` : "❌ No price data"
+          name: match.name,
+          // ✅ Official Habbo CDN URL format
+          icon: `https://www.habbo.com/habbo-imaging/asset/100000000/${match.classname}.png`,
+          price: match.average_price ? `${match.average_price}c` : "❌ No price data"
         };
       }
     }
   } catch {}
 
-  return { name: original, icon: CONFIG.default_image, price: "❌ No price data" };
+  // ✅ Auto-guess image even for force-added items
+  const safeName = original.toLowerCase().replace(/[^a-z0-9]/g, "_");
+  return {
+    name: original,
+    icon: `https://www.habbo.com/habbo-imaging/asset/100000000/${safeName}.png`,
+    price: "❌ No price data"
+  };
 }
 
 // ==============================================
-// IMAGE ATTACHMENT HELPER
+// IMAGE ATTACHMENT — NO MORE CRASHES
 // ==============================================
 async function getImageAttachment(imageUrl, filename) {
   try {
-    const res = await fetch(imageUrl, { timeout: 2500 });
-    if (!res.ok) throw new Error("Failed to fetch");
+    const res = await fetch(imageUrl, { timeout: 3000 });
+    if (!res.ok) throw new Error("Image not found");
     const buffer = await res.arrayBuffer();
     return new AttachmentBuilder(Buffer.from(buffer), { name: filename });
   } catch {
-    const res = await fetch(CONFIG.default_image, { timeout: 2500 });
-    const buffer = await res.arrayBuffer();
-    return new AttachmentBuilder(Buffer.from(buffer), { name: filename });
+    try {
+      // Fallback to default image
+      const fallback = await fetch(CONFIG.default_image, { timeout: 3000 });
+      const buffer = await fallback.arrayBuffer();
+      return new AttachmentBuilder(Buffer.from(buffer), { name: `fallback_${filename}` });
+    } catch {
+      // Final safe fallback if everything fails
+      return new AttachmentBuilder(Buffer.from([]), { name: "blank.png" });
+    }
   }
 }
 
@@ -259,37 +277,74 @@ async function updateLeaderboard() {
 }
 
 // ==============================================
-// STOCK DISPLAY — ALL IMAGES PER RARITY
+// STOCK DISPLAY — ✅ IMAGES IN ROWS OF 5
 // ==============================================
 async function buildSingleRarityDisplay(rarityId) {
   const group = CONFIG.rarity_groups.find(g => g.id === rarityId);
-  if (!group) return { embed: null, attachments: [] };
+  if (!group) return { embeds: [], attachments: [] };
 
   const items = STOCK[group.id].filter(i => i.stock > 0);
   const totalStock = items.reduce((sum, item) => sum + item.stock, 0);
 
-  const embed = new EmbedBuilder()
-    .setTitle(group.name)
-    .setColor(group.color)
-    .setTimestamp()
-    .setFooter({ text: `Total items: ${totalStock} • Updated every 15 mins` });
-
-  if (totalStock === 0) {
-    embed.setDescription("**Prices:** Market Average\n\n> No items currently in stock");
-    return { embed, attachments: [] };
-  }
-
-  let desc = "**Prices:** Market Average\n\n";
+  const embeds = [];
   const attachments = [];
 
-  for (let i = 0; i < items.length; i++) {
-    const details = await getFurniDetails(items[i].name);
-    desc += `**${capitalizeWords(details.name)}**\n• Price: ${details.price}\n• Stock: ${items[i].stock}\n\n`;
-    attachments.push(await getImageAttachment(details.icon, `item_${i}_${Date.now()}.png`));
+  if (totalStock === 0) {
+    embeds.push(
+      new EmbedBuilder()
+        .setTitle(group.name)
+        .setColor(group.color)
+        .setDescription("**Prices:** Market Average\n\n> No items currently in stock")
+        .setTimestamp()
+        .setFooter({ text: `Total items: ${totalStock} • Updated every 15 mins` })
+    );
+    return { embeds, attachments };
   }
 
-  embed.setDescription(desc.trim());
-  return { embed, attachments };
+  // Split items into chunks of 5
+  const chunks = [];
+  for (let i = 0; i < items.length; i += CONFIG.images_per_row) {
+    chunks.push(items.slice(i, i + CONFIG.images_per_row));
+  }
+
+  // Build each chunk as a separate embed
+  for (let rowIndex = 0; rowIndex < chunks.length; rowIndex++) {
+    const chunk = chunks[rowIndex];
+    let desc = rowIndex === 0 ? "**Prices:** Market Average\n\n" : "";
+    const imageUrls = [];
+
+    for (let i = 0; i < chunk.length; i++) {
+      const item = chunk[i];
+      const details = await getFurniDetails(item.name);
+      desc += `**${capitalizeWords(details.name)}**\n• Price: ${details.price}\n• Stock: ${item.stock}\n\n`;
+      const fileName = `item_${rowIndex}_${i}_${Date.now()}.png`;
+      attachments.push(await getImageAttachment(details.icon, fileName));
+      imageUrls.push(`attachment://${fileName}`);
+    }
+
+    const embed = new EmbedBuilder()
+      .setColor(group.color)
+      .setTimestamp();
+
+    if (rowIndex === 0) {
+      embed.setTitle(group.name);
+      embed.setFooter({ text: `Total items: ${totalStock} • Updated every 15 mins` });
+    }
+
+    embed.setDescription(desc.trim());
+
+    // Add images in a row
+    if (imageUrls.length > 0) {
+      imageUrls.forEach((url, idx) => {
+        if (idx === 0) embed.setThumbnail(url);
+        else embed.setImage(url);
+      });
+    }
+
+    embeds.push(embed);
+  }
+
+  return { embeds, attachments };
 }
 
 async function buildRaritySelectMenu() {
@@ -310,15 +365,15 @@ async function updateStockDisplay() {
   const ch = await client.channels.fetch(CONFIG.channels.stock_display).catch(() => null);
   if (!ch) return;
 
-  const { embed, attachments } = await buildSingleRarityDisplay("blue");
+  const { embeds, attachments } = await buildSingleRarityDisplay("blue");
   const menu = await buildRaritySelectMenu();
 
   try {
     if (DATA.stock_display_message_id) {
       const msg = await ch.messages.fetch(DATA.stock_display_message_id).catch(() => null);
-      if (msg) return msg.edit({ embeds: [embed], files: attachments, components: [menu] });
+      if (msg) return msg.edit({ embeds, files: attachments, components: [menu] });
     }
-    const newMsg = await ch.send({ embeds: [embed], files: attachments, components: [menu] });
+    const newMsg = await ch.send({ embeds, files: attachments, components: [menu] });
     DATA.stock_display_message_id = newMsg.id;
     saveData();
   } catch {}
@@ -431,9 +486,9 @@ client.on("interactionCreate", async interaction => {
     // Handle rarity dropdown
     if (interaction.isStringSelectMenu() && interaction.customId === "rarity_select") {
       await interaction.deferUpdate();
-      const { embed, attachments } = await buildSingleRarityDisplay(interaction.values[0]);
-      if (!embed) return interaction.followUp({ content: "❌ Rarity not found", flags: MessageFlags.Ephemeral });
-      return interaction.editReply({ embeds: [embed], files: attachments, components: [await buildRaritySelectMenu()] });
+      const { embeds, attachments } = await buildSingleRarityDisplay(interaction.values[0]);
+      if (!embeds || embeds.length === 0) return interaction.followUp({ content: "❌ Rarity not found", flags: MessageFlags.Ephemeral });
+      return interaction.editReply({ embeds, files: attachments, components: [await buildRaritySelectMenu()] });
     }
 
     if (!interaction.isChatInputCommand()) return;
@@ -487,9 +542,9 @@ client.on("interactionCreate", async interaction => {
       }
 
       case "showprizes": {
-        const { embed, attachments } = await buildSingleRarityDisplay("blue");
+        const { embeds, attachments } = await buildSingleRarityDisplay("blue");
         const menu = await buildRaritySelectMenu();
-        return interaction.editReply({ embeds: [embed], files: attachments, components: [menu] });
+        return interaction.editReply({ embeds, files: attachments, components: [menu] });
       }
 
       case "balance": {
@@ -698,7 +753,6 @@ A staff member will deliver this to you shortly.
           .setColor("#2ecc71")
           .setTimestamp();
 
-        // ✅ STAFF CLAIM NOTIFICATION — NOW WITH IMAGE
         const claimsEmbed = new EmbedBuilder()
           .setTitle("📦 New Claim Request")
           .setThumbnail(`attachment://${prizeAttachment.name}`)

@@ -33,7 +33,7 @@ const CONFIG = {
   channels: {
     mod_awareness: process.env.MOD_CHANNEL_ID,
     claims: process.env.CLAIMS_CHANNEL_ID,
-    log: "1525289896963608668", // Your private logs channel
+    log: "1525289896963608668", // Your logs channel
     stock: process.env.STOCK_CHANNEL_ID
   },
   room_link: "https://www.habbo.com/room/1234567",
@@ -95,11 +95,21 @@ function getAvatar(habboName) {
   return `https://www.habbo.com/habbo-imaging/avatarimage?user=${safe}&direction=2&headonly=1&size=l&gesture=std`;
 }
 
+// ✅ Updated: Image from HabboAssets, Price from FurniEye + Not Found handling
 async function getFurniDetails(furniName) {
-  const safeName = furniName.toLowerCase().replace(/ /g, "_").replace(/'/g, "").replace(/&/g, "and");
-  const iconUrl = `https://images.habbo.com/dcr/hof_furni/${safeName}_icon.png`;
+  const safeName = furniName.toLowerCase()
+    .replace(/ /g, "_")
+    .replace(/'/g, "")
+    .replace(/&/g, "and")
+    .replace(/-/g, "_");
+
+  // 🔹 Image from HabboAssets
+  const iconUrl = `https://www.habboassets.com/furniture/${safeName}.png`;
+
+  // 🔹 Price from FurniEye
   const searchUrl = `https://www.furnieye.com/api/search?q=${encodeURIComponent(furniName)}`;
-  let avgPrice = "Estimated";
+  let avgPrice = "❌ No price data";
+  let itemFound = false;
 
   try {
     const res = await fetch(searchUrl, { timeout: 5000 });
@@ -107,15 +117,28 @@ async function getFurniDetails(furniName) {
       const data = await res.json();
       if (data.results && data.results.length > 0) {
         const match = data.results.find(item => item.name.toLowerCase() === furniName.toLowerCase()) || data.results[0];
-        avgPrice = match.average_price ? `${match.average_price}c` : "Unlisted";
+        if (match && match.average_price !== null && match.average_price !== undefined) {
+          avgPrice = `${match.average_price}c`;
+          itemFound = true;
+        }
       }
     }
   } catch (err) {
-    const group = CONFIG.rarity_groups.find(g => STOCK[g.id]?.some(i => i.name === furniName));
-    avgPrice = group ? `${Math.round((group.credit_min + group.credit_max) / 2)}c` : "N/A";
+    console.log(`⚠️ FurniEye API error for ${furniName}:`, err.message);
   }
 
-  return { icon: iconUrl, price: avgPrice, link: `https://www.furnieye.com/items?search=${encodeURIComponent(furniName)}` };
+  // Fallback estimated price if not found
+  if (!itemFound) {
+    const group = CONFIG.rarity_groups.find(g => STOCK[g.id]?.some(i => i.name === furniName));
+    avgPrice = group ? `~${Math.round((group.credit_min + group.credit_max) / 2)}c` : "❌ No price data";
+  }
+
+  return {
+    icon: iconUrl,
+    price: avgPrice,
+    link: `https://www.furnieye.com/items?search=${encodeURIComponent(furniName)}`,
+    found: itemFound
+  };
 }
 
 function ensureUser(id) {
@@ -205,7 +228,7 @@ client.once("ready", async () => {
     new SlashCommandBuilder().setName("balance").setDescription("Check your token balance and linked Habbo account"),
     new SlashCommandBuilder().setName("gumball").setDescription("Play the gumball machine — costs 1 Token per spin"),
     new SlashCommandBuilder().setName("howtoplay").setDescription("View exchange rates and how to earn tokens"),
-    new SlashCommandBuilder().setName("showprizes").setDescription("See all available prizes, values and stock levels"),
+    new SlashCommandBuilder().setName("showprizes").setDescription("View all available prizes, images, prices and stock levels"),
     new SlashCommandBuilder()
       .setName("history")
       .setDescription("View your activity history — staff can add a user to view theirs")
@@ -446,25 +469,22 @@ client.on("interactionCreate", async interaction => {
     if (interaction.isChatInputCommand()) {
       switch (interaction.commandName) {
 
-        // ------------------------------
-        // NEW HELP COMMAND
-        // ------------------------------
         case "help": {
           const embed = new EmbedBuilder()
             .setTitle("📋 Gumball Bot Commands")
             .setColor("#9b59b6")
-            .setDescription("All commands are private — only you can see the result.")
+            .setDescription("Public commands: /howtoplay, /showprizes | All others are private.")
             .addFields(
               {
                 name: "👤 User Commands",
                 value: `
 \`/help\` — Show this help menu
 \`/balance\` — Check your tokens and linked Habbo
-\`/howtoplay\` — View rates and rules
+\`/howtoplay\` — View rates and rules (public)
+\`/showprizes\` — View available prizes, prices & stock (public)
 \`/depositcoins <amount>\` — Submit credit deposit
 \`/depositfurni <quantity> <items>\` — Submit furni deposit
 \`/gumball\` — Play for prizes (costs 1 Token)
-\`/showprizes\` — View available prizes & stock
 \`/claim <prize>\` — Claim a prize you won
 \`/history\` — View your own activity history
                 `.trim(),
@@ -533,9 +553,46 @@ client.on("interactionCreate", async interaction => {
 • \`/claim <prize name>\` — Claim what you win
                 `.trim())
                 .setColor("#3498db")
-            ],
-            ephemeral: true
+            ]
           });
+        }
+
+        // ------------------------------
+        // SHOW PRIZES - PUBLIC, GROUPED, IMAGES FROM HABBOASSETS, PRICES FROM FURNIEYE
+        // ------------------------------
+        case "showprizes": {
+          const mainEmbed = new EmbedBuilder()
+            .setTitle("🎁 Available Prizes & Stock")
+            .setDescription("Items grouped by rarity • Images from HabboAssets • Prices from FurniEye")
+            .setColor("#95a5a6")
+            .setTimestamp();
+
+          for (const group of CONFIG.rarity_groups) {
+            const items = STOCK[group.id]?.filter(i => i.stock > 0) || [];
+            if (items.length === 0) {
+              mainEmbed.addFields({
+                name: `${group.name} Rarity`,
+                value: "No items currently in stock",
+                inline: false
+              });
+              continue;
+            }
+
+            let itemList = "";
+            for (const item of items) {
+              const details = await getFurniDetails(item.name);
+              const status = details.found ? "" : " ⚠️ *Name may be misspelled*";
+              itemList += `**${item.name}**${status}\n├ Stock: ${item.stock}\n├ Price: ${details.price}\n└ [View Details](${details.link})\n\n`;
+            }
+
+            mainEmbed.addFields({
+              name: `${group.name} Rarity`,
+              value: itemList,
+              inline: false
+            });
+          }
+
+          return interaction.reply({ embeds: [mainEmbed] });
         }
 
         case "whatsnew": {
@@ -543,14 +600,12 @@ client.on("interactionCreate", async interaction => {
             embeds: [
               new EmbedBuilder().setTitle("📢 Latest Updates")
                 .setDescription(`
-✅ Private replies only — nothing public
-✅ Auto‑link Habbo accounts
-✅ Live prize values & stock levels
-✅ Custom notes + DM notifications
-✅ Full logs in \`#gumball-logs\`
-✅ Traded/Sent button for claims
-✅ Staff can view user history
-✅ New \`/help\` command added
+✅ \`/howtoplay\` & \`/showprizes\` are public
+✅ **Images from HabboAssets**, **Prices from FurniEye**
+✅ Clear "Not Found" warnings for typos/missing items
+✅ All personal commands remain private
+✅ Full logging to #gumball-logs
+✅ Staff tools & history tracking
                 `.trim())
                 .setColor("#f39c12")
             ],
@@ -684,9 +739,9 @@ client.on("interactionCreate", async interaction => {
           user.balance += tokensWon; saveData();
 
           addToHistory(interaction.user.id, "Gumball Spin", `Won: ${prize.name} | +${tokensWon} Tokens`);
+          const details = await getFurniDetails(prize.name);
           await sendLog("🎰 Spin Result", `**User:** ${interaction.user.tag}\n**Prize:** ${prize.name}\n**Tokens Won:** +${tokensWon}\n**New Balance:** ${user.balance}`, group.color);
 
-          const details = await getFurniDetails(prize.name);
           return interaction.reply({
             embeds: [
               new EmbedBuilder().setTitle("🎉 YOU WON!")
@@ -697,20 +752,6 @@ client.on("interactionCreate", async interaction => {
             ],
             ephemeral: true
           });
-        }
-
-        case "showprizes": {
-          const embed = new EmbedBuilder().setTitle("🎁 Available Prizes").setColor("#95a5a6").setTimestamp();
-          for (const group of CONFIG.rarity_groups) {
-            const items = STOCK[group.id] || [];
-            if (items.length === 0) {
-              embed.addFields({ name: `${group.name} Rarity`, value: "No stock available", inline: false });
-              continue;
-            }
-            const list = items.map(i => `• ${i.name} — ${i.stock} in stock`).join("\n");
-            embed.addFields({ name: `${group.name} Rarity`, value: list, inline: false });
-          }
-          return interaction.reply({ embeds: [embed], ephemeral: true });
         }
 
         case "addtokens": {
@@ -744,8 +785,10 @@ client.on("interactionCreate", async interaction => {
           const existing = STOCK[group].find(i => i.name.toLowerCase() === name.toLowerCase());
           existing ? existing.stock += amount : STOCK[group].push({ name, stock: amount });
           saveStock();
-          await sendLog("📥 Stock Added", `**Item:** ${name}\n**Group:** ${group}\n**Quantity:** +${amount}\n**Added by:** ${interaction.user.tag}`, "#27ae60");
-          return interaction.reply({ content: `✅ Successfully added **${amount}x ${name}** to ${group} stock.`, ephemeral: true });
+          const details = await getFurniDetails(name);
+          const status = details.found ? "" : "⚠️ *Item not found — check spelling*";
+          await sendLog("📥 Stock Added", `**Item:** ${name} ${status}\n**Group:** ${group}\n**Quantity:** +${amount}\n**Added by:** ${interaction.user.tag}`, "#27ae60");
+          return interaction.reply({ content: `✅ Added **${amount}x ${name}** to ${group} stock. ${status}`, ephemeral: true });
         }
 
         case "removestock": {
@@ -760,7 +803,7 @@ client.on("interactionCreate", async interaction => {
           if (STOCK[group][idx].stock <= 0) STOCK[group].splice(idx, 1);
           saveStock();
           await sendLog("📤 Stock Removed", `**Item:** ${name}\n**Group:** ${group}\n**Quantity:** -${amount}\n**Removed by:** ${interaction.user.tag}`, "#e67e22");
-          return interaction.reply({ content: `✅ Successfully removed **${amount}x ${name}** from ${group} stock.`, ephemeral: true });
+          return interaction.reply({ content: `✅ Removed **${amount}x ${name}** from ${group} stock.`, ephemeral: true });
         }
       }
     }

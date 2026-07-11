@@ -10,7 +10,8 @@ const {
   ButtonStyle,
   SlashCommandBuilder,
   PermissionsBitField,
-  MessageFlags
+  MessageFlags,
+  AttachmentBuilder
 } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
@@ -111,12 +112,6 @@ function getHabboName(discordId) {
   return habboLinks[discordId.toString()] || "Not linked";
 }
 
-function getAvatar(habboName) {
-  if (!habboName || habboName === "Not linked")
-    return "https://www.habbo.com/habbo-imaging/avatarimage?user=Habbo&headonly=1&direction=2&size=l";
-  return `https://www.habbo.com/habbo-imaging/avatarimage?user=${encodeURIComponent(habboName)}&direction=2&headonly=1&size=l`;
-}
-
 function parsePriceToCredits(priceStr) {
   if (!priceStr || priceStr === "❌ No price data") return 0;
   const num = parseInt(priceStr.replace(/\D/g, ''), 10);
@@ -124,13 +119,12 @@ function parsePriceToCredits(priceStr) {
 }
 
 // ==============================================
-// FAST FURNI DETAILS — NO DELAYS
+// FURNI DETAILS — API IMAGES
 // ==============================================
 async function getFurniDetails(furniName) {
   const original = furniName.trim();
   const searchKey = normalizeName(original);
 
-  // Use saved stock data FIRST — instant response
   const saved = Object.values(STOCK).flat().find(i => normalizeName(i.name) === searchKey);
   if (saved) return {
     name: saved.name,
@@ -138,7 +132,6 @@ async function getFurniDetails(furniName) {
     price: saved.price || "❌ No price data"
   };
 
-  // Only fetch if not saved, with very short timeout
   try {
     const res = await fetch(`https://habboapi.site/api/market/history?name=${encodeURIComponent(original)}&hotel=com`, { timeout: 2000 });
     if (res.ok) {
@@ -155,6 +148,22 @@ async function getFurniDetails(furniName) {
   } catch {}
 
   return { name: original, icon: CONFIG.default_image, price: "❌ No price data" };
+}
+
+// ==============================================
+// IMAGE ATTACHMENT HELPER
+// ==============================================
+async function getImageAttachment(imageUrl, filename) {
+  try {
+    const res = await fetch(imageUrl, { timeout: 2500 });
+    if (!res.ok) throw new Error("Failed to fetch");
+    const buffer = await res.arrayBuffer();
+    return new AttachmentBuilder(Buffer.from(buffer), { name: filename });
+  } catch {
+    const res = await fetch(CONFIG.default_image, { timeout: 2500 });
+    const buffer = await res.arrayBuffer();
+    return new AttachmentBuilder(Buffer.from(buffer), { name: filename });
+  }
 }
 
 // ==============================================
@@ -250,11 +259,11 @@ async function updateLeaderboard() {
 }
 
 // ==============================================
-// STOCK DISPLAY — ✅ IMAGES WORK 100%
+// STOCK DISPLAY — ALL IMAGES PER RARITY
 // ==============================================
-async function buildSingleRarityEmbed(rarityId) {
+async function buildSingleRarityDisplay(rarityId) {
   const group = CONFIG.rarity_groups.find(g => g.id === rarityId);
-  if (!group) return null;
+  if (!group) return { embed: null, attachments: [] };
 
   const items = STOCK[group.id].filter(i => i.stock > 0);
   const totalStock = items.reduce((sum, item) => sum + item.stock, 0);
@@ -262,26 +271,26 @@ async function buildSingleRarityEmbed(rarityId) {
   const embed = new EmbedBuilder()
     .setTitle(group.name)
     .setColor(group.color)
-    .setDescription("**Prices:** Market Average — final value may vary due to tax/fees")
     .setTimestamp()
-    .setFooter({ text: `Total in category: ${totalStock} items • Updated every 15 mins` });
+    .setFooter({ text: `Total items: ${totalStock} • Updated every 15 mins` });
 
   if (totalStock === 0) {
-    embed.setDescription("**Prices:** Market Average — final value may vary due to tax/fees\n\n> No items currently in stock");
-    return embed;
+    embed.setDescription("**Prices:** Market Average\n\n> No items currently in stock");
+    return { embed, attachments: [] };
   }
 
-  let desc = "";
-  for (const item of items) {
-    const details = await getFurniDetails(item.name);
-    desc += `**${capitalizeWords(details.name)}**\n• Price: ${details.price}\n• Stock: ${item.stock}\n\n`;
+  let desc = "**Prices:** Market Average\n\n";
+  const attachments = [];
+
+  // Get details and image for EVERY item
+  for (let i = 0; i < items.length; i++) {
+    const details = await getFurniDetails(items[i].name);
+    desc += `**${capitalizeWords(details.name)}**\n• Price: ${details.price}\n• Stock: ${items[i].stock}\n\n`;
+    attachments.push(await getImageAttachment(details.icon, `item_${i}_${Date.now()}.png`));
   }
 
-  embed.setDescription(`**Prices:** Market Average — final value may vary due to tax/fees\n\n${desc.trim()}`);
-  const firstItemDetails = await getFurniDetails(items[0].name);
-  embed.setImage(firstItemDetails.icon);
-
-  return embed;
+  embed.setDescription(desc.trim());
+  return { embed, attachments };
 }
 
 async function buildRaritySelectMenu() {
@@ -302,15 +311,15 @@ async function updateStockDisplay() {
   const ch = await client.channels.fetch(CONFIG.channels.stock_display).catch(() => null);
   if (!ch) return;
 
-  const defaultEmbed = await buildSingleRarityEmbed("blue");
-  const selectMenu = await buildRaritySelectMenu();
+  const { embed, attachments } = await buildSingleRarityDisplay("blue");
+  const menu = await buildRaritySelectMenu();
 
   try {
     if (DATA.stock_display_message_id) {
       const msg = await ch.messages.fetch(DATA.stock_display_message_id).catch(() => null);
-      if (msg) return msg.edit({ embeds: [defaultEmbed], components: [selectMenu] });
+      if (msg) return msg.edit({ embeds: [embed], files: attachments, components: [menu] });
     }
-    const newMsg = await ch.send({ embeds: [defaultEmbed], components: [selectMenu] });
+    const newMsg = await ch.send({ embeds: [embed], files: attachments, components: [menu] });
     DATA.stock_display_message_id = newMsg.id;
     saveData();
   } catch {}
@@ -416,16 +425,16 @@ client.once("ready", async () => {
 });
 
 // ==============================================
-// INTERACTION HANDLERS — ✅ NO MORE 10062 ERRORS
+// INTERACTION HANDLERS
 // ==============================================
 client.on("interactionCreate", async interaction => {
   try {
-    // Handle rarity dropdown menu
+    // Handle rarity dropdown
     if (interaction.isStringSelectMenu() && interaction.customId === "rarity_select") {
-      await interaction.deferUpdate(); // Instant response — stops timeout
-      const newEmbed = await buildSingleRarityEmbed(interaction.values[0]);
-      if (!newEmbed) return interaction.followUp({ content: "❌ Rarity not found", flags: MessageFlags.Ephemeral });
-      return interaction.editReply({ embeds: [newEmbed] });
+      await interaction.deferUpdate();
+      const { embed, attachments } = await buildSingleRarityDisplay(interaction.values[0]);
+      if (!embed) return interaction.followUp({ content: "❌ Rarity not found", flags: MessageFlags.Ephemeral });
+      return interaction.editReply({ embeds: [embed], files: attachments, components: [await buildRaritySelectMenu()] });
     }
 
     if (!interaction.isChatInputCommand()) return;
@@ -433,7 +442,6 @@ client.on("interactionCreate", async interaction => {
     const isStaff = interaction.member?.permissions?.has(PermissionsBitField.Flags.ManageGuild) ||
       (CONFIG.bot.admin_role_id && interaction.member?.roles?.cache?.has(CONFIG.bot.admin_role_id));
 
-    // ✅ DEFER IMMEDIATELY — THIS FIXES THE 10062 ERROR
     await interaction.deferReply({ flags: isStaff ? MessageFlags.Ephemeral : 0 });
 
     switch (interaction.commandName) {
@@ -480,9 +488,9 @@ client.on("interactionCreate", async interaction => {
       }
 
       case "showprizes": {
-        const embed = await buildSingleRarityEmbed("blue");
+        const { embed, attachments } = await buildSingleRarityDisplay("blue");
         const menu = await buildRaritySelectMenu();
-        return interaction.editReply({ embeds: [embed], components: [menu] });
+        return interaction.editReply({ embeds: [embed], files: attachments, components: [menu] });
       }
 
       case "balance": {
@@ -507,7 +515,6 @@ client.on("interactionCreate", async interaction => {
 
         const embed = new EmbedBuilder()
           .setTitle(`📊 Stats for ${target.tag}`)
-          .setThumbnail(getAvatar(habbo))
           .addFields(
             { name: "Habbo Name", value: habbo, inline: true },
             { name: "Current Balance", value: `${userData.balance} Tokens`, inline: true },
@@ -636,6 +643,7 @@ client.on("interactionCreate", async interaction => {
         prize.stock -= 1;
 
         const prizeDetails = await getFurniDetails(prize.name);
+        const prizeAttachment = await getImageAttachment(prizeDetails.icon, `prize_${Date.now()}.png`);
         const prizeValue = parsePriceToCredits(prizeDetails.price);
         user.lifetime_won_value += prizeValue;
         updateWeeklyStats(interaction.user.id, 1, prizeValue);
@@ -652,7 +660,7 @@ client.on("interactionCreate", async interaction => {
 
         const winEmbed = new EmbedBuilder()
           .setTitle("🎉 YOU WON!")
-          .setThumbnail(prizeDetails.icon)
+          .setThumbnail(`attachment://${prizeAttachment.name}`)
           .setDescription(`
 **Rarity:** ${drawnGroup.name}
 **Item:** ${capitalizeWords(prizeDetails.name)}
@@ -664,7 +672,7 @@ Run \`/claim\` to get your item delivered!
           .setTimestamp();
 
         await sendLog("🎰 Gumball Spin", `**${interaction.user.tag}** spun and won **${prizeDetails.name}** (${drawnGroup.name})`, drawnGroup.color, true);
-        return interaction.editReply({ embeds: [winEmbed] });
+        return interaction.editReply({ embeds: [winEmbed], files: [prizeAttachment] });
       }
 
       case "claim": {
@@ -724,7 +732,6 @@ A staff member will deliver this to you shortly.
 
         const requestEmbed = new EmbedBuilder()
           .setTitle("💸 New Credit Deposit")
-          .setThumbnail(getAvatar(habbo))
           .addFields(
             { name: "User", value: interaction.user.tag, inline: true },
             { name: "Habbo", value: habbo, inline: true },
@@ -766,7 +773,6 @@ A staff member will deliver this to you shortly.
 
         const requestEmbed = new EmbedBuilder()
           .setTitle("📦 New Furni Deposit")
-          .setThumbnail(getAvatar(habbo))
           .addFields(
             { name: "User", value: interaction.user.tag, inline: true },
             { name: "Habbo", value: habbo, inline: true },

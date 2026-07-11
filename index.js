@@ -542,7 +542,7 @@ client.on("interactionCreate", async interaction => {
 
         const details = await getFurniDetails(inputName);
         if (!force && details.icon === CONFIG.default_image && details.price === "❌ No price data")
-          return interaction.editReply({ content: `⚠️ **"${inputName}"** was not found in our database. Use `force: true` to add it manually.` });
+          return interaction.editReply({ content: `⚠️ **"${inputName}"** was not found in our database. Use \`force: true\` to add it manually.` });
 
         if (customPrice) details.price = customPrice;
         if (customImage) details.icon = customImage;

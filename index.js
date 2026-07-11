@@ -133,7 +133,7 @@ async function getFurniDetails(furniName) {
     try {
       const res = await fetch(`https://www.habboassets.com/api/search?q=${encodeURIComponent(original)}&limit=5`, {
         headers: { Authorization: `Bearer ${CONFIG.habbo_assets_token}` },
-        timeout: 5000
+        timeout: 4000
       });
       if (res.ok) {
         const data = await res.json();
@@ -141,8 +141,7 @@ async function getFurniDetails(furniName) {
           const best = data.items.find(i => normalizeName(i.name) === searchKey) || data.items[0];
           if (best) {
             matchedName = best.name;
-            // Medium size image
-            iconUrl = best.image_url || best.icon_url || best.medium_url || best.large_url || CONFIG.default_image;
+            iconUrl = best.medium_url || best.image_url || best.icon_url || CONFIG.default_image;
           }
         }
       }
@@ -155,7 +154,7 @@ async function getFurniDetails(furniName) {
     if (CONFIG.habboapi_key) headers["X-Auth-Key"] = CONFIG.habboapi_key;
 
     const res = await fetch(`https://habboapi.site/api/market/history?name=${encodeURIComponent(original)}&hotel=com`, {
-      headers, timeout: 6000
+      headers, timeout: 4000
     });
     if (res.ok) {
       const data = await res.json();
@@ -174,7 +173,7 @@ async function getFurniDetails(furniName) {
   // 3. Fallback price from FurniEye
   if (price === "❌ No price data") {
     try {
-      const res = await fetch(`https://www.furnieye.com/api/search?q=${encodeURIComponent(original)}&limit=5`, { timeout: 4000 });
+      const res = await fetch(`https://www.furnieye.com/api/search?q=${encodeURIComponent(original)}&limit=5`, { timeout: 3000 });
       if (res.ok) {
         const data = await res.json();
         if (data.results?.length > 0) {
@@ -281,7 +280,7 @@ async function updateLeaderboard() {
 }
 
 // ==============================================
-// STOCK DISPLAY — FORMATTED AS REQUESTED
+// STOCK DISPLAY — IMAGES NEXT TO INFO
 // ==============================================
 async function buildStockEmbed() {
   const embed = new EmbedBuilder()
@@ -306,7 +305,8 @@ async function buildStockEmbed() {
     let groupContent = "";
     for (const item of items) {
       const details = await getFurniDetails(item.name);
-      groupContent += `**${details.name}**\n💰 Market Price: ${details.price} | 📦 In Stock: ${item.stock}\n\n`;
+      // Small inline image next to text
+      groupContent += `**${details.name}** ${details.icon ? `[ ](${details.icon})` : ''}\n💰 Market Price: ${details.price} | 📦 In Stock: ${item.stock}\n\n`;
     }
 
     groupContent += `**Total in ${group.name.replace("🔵 ", "").replace("🟣 ", "").replace("🟢 ", "").replace("💜 ", "").replace("🟡 ", "")}: ${totalStock} items**`;
@@ -318,12 +318,7 @@ async function buildStockEmbed() {
     });
   }
 
-  const firstItem = Object.values(STOCK).flat().find(i => i.stock > 0);
-  if (firstItem) {
-    const firstDetails = await getFurniDetails(firstItem.name);
-    embed.setThumbnail(firstDetails.icon);
-  }
-
+  // REMOVED global thumbnail so no image in corner
   return embed;
 }
 
@@ -458,7 +453,11 @@ client.on("interactionCreate", async interaction => {
   try {
     if (interaction.isChatInputCommand()) {
       const isPublic = ["showprizes", "howtoplay", "help", "balance", "gumball", "claim", "depositcoins", "depositfurni"].includes(interaction.commandName);
-      await interaction.deferReply({ flags: isPublic ? 0 : MessageFlags.Ephemeral });
+      // Add timeout protection
+      await Promise.race([
+        interaction.deferReply({ flags: isPublic ? 0 : MessageFlags.Ephemeral }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Defer timeout")), 2500))
+      ]);
 
       switch (interaction.commandName) {
         case "help": {
@@ -481,7 +480,8 @@ client.on("interactionCreate", async interaction => {
         }
 
         case "showprizes": {
-          return interaction.editReply({ embeds: [await buildStockEmbed()] });
+          const embed = await buildStockEmbed();
+          return interaction.editReply({ embeds: [embed] });
         }
 
         case "history": {
@@ -618,7 +618,7 @@ client.on("interactionCreate", async interaction => {
           };
           saveData();
 
-          // 🎉 WIN DISPLAY — shows image, name, value clearly
+          // Win embed: image is large and clear
           const winEmbed = new EmbedBuilder()
             .setTitle("🎉 YOU WON!")
             .setThumbnail(details.icon)
@@ -790,6 +790,10 @@ client.on("interactionCreate", async interaction => {
       }
     }
   } catch (err) {
+    if (err.message === "Defer timeout") {
+      console.log("⚠️ Interaction took too long — skipping to avoid error");
+      return;
+    }
     console.error("❌ Error:", err);
     if (interaction.deferred) interaction.editReply({ content: "❌ Something went wrong." }).catch(() => {});
   }

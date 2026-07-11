@@ -298,30 +298,29 @@ async function buildStockEmbeds() {
 
 > No items currently in stock");
     } else {
-      // Build the embed with 5 items per row
+      // Create a single embed for all items in the rarity group
+      let itemList = "";
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
         const details = await getFurniDetails(item.name);
 
-        // Add the item's name and image as a single inline field
-        embed.addFields({
-          name: `**${details.name}**`,
-          value: `[View Image](${details.icon})`,
-          inline: true
-        });
+        // Format each item with its name, price, and stock
+        itemList += `**${i + 1}. ${details.name}**
+`;
+        itemList += `Market Avg: ${details.price} | Stock: ${item.stock}
 
-        // Add the price and stock as a second inline field
-        embed.addFields({
-          name: "\u200B",
-          value: `Market Avg: ${details.price} | Stock: ${item.stock}`,
-          inline: true
-        });
-
-        // Add a small spacer to keep the 5-item row format
-        if ((i + 1) % 5 === 0) {
-          embed.addFields({ name: "\u200B", value: "\u200B", inline: true });
-        }
+`;
       }
+
+      // Set the description to the list of items
+      embed.setDescription(`**Prices:** Market Average — final value may vary due to tax/fees
+
+${itemList}`);
+
+      // Set the image to the first item's image (or a default if none)
+      const firstItem = items[0];
+      const firstDetails = await getFurniDetails(firstItem.name);
+      embed.setImage(firstDetails.icon);
     }
 
     embed.setFooter({ text: `Total in category: ${totalStock} items • Updated every 15 mins` });

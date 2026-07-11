@@ -296,25 +296,20 @@ async function buildStockEmbeds() {
     if (totalStock === 0) {
       embed.setDescription("**Prices:** Market Average — final value may vary due to tax/fees\n\n> No items currently in stock");
     } else {
+      // Add items in rows of 3 (fits better with images)
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
         const details = await getFurniDetails(item.name);
 
+        // Layout: Name, then Price + Stock, then IMAGE rendered properly
         embed.addFields({
           name: `**${details.name}**`,
-          value: `Market Avg: ${details.price} | Stock: ${item.stock}`,
+          value: `Market Avg: ${details.price} | Stock: ${item.stock}\n[⠀](${details.icon})`,
           inline: true
         });
 
-        // Add image below the name
-        embed.addFields({
-          name: "\u200B",
-          value: `[ ](${details.icon})`,
-          inline: true
-        });
-
-        // Spacer after every 2 items = 1 full row
-        if ((i + 1) % 2 === 0) {
+        // New row after every 3 items
+        if ((i + 1) % 3 === 0) {
           embed.addFields({ name: "\u200B", value: "\u200B", inline: true });
         }
       }
@@ -326,24 +321,6 @@ async function buildStockEmbeds() {
   }
 
   return embeds;
-}
-
-async function updateStockDisplay() {
-  if (!CONFIG.channels.stock_display) return;
-  const ch = await client.channels.fetch(CONFIG.channels.stock_display).catch(() => null);
-  if (!ch) return;
-
-  const embeds = await buildStockEmbeds();
-
-  try {
-    if (DATA.stock_display_message_id) {
-      const msg = await ch.messages.fetch(DATA.stock_display_message_id).catch(() => null);
-      if (msg) return msg.edit({ embeds: embeds });
-    }
-    const newMsg = await ch.send({ embeds: embeds });
-    DATA.stock_display_message_id = newMsg.id;
-    saveData();
-  } catch {}
 }
 
 // ==============================================

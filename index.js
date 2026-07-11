@@ -22,9 +22,10 @@ const fetch = require('node-fetch');
 const CONFIG = {
   bot: {
     token: process.env.BOT_TOKEN,
-    guild_id: process.env.GUILD_ID || "1456735416156819578",
-    verified_role_id: process.env.VERIFIED_ROLE_ID || "1457138449340694672",
-    admin_role_id: process.env.ADMIN_ROLE_ID
+    guild_id: process.env.GUILD_ID || "",
+    verified_role_id: process.env.VERIFIED_ROLE_ID || "",
+    admin_role_id: process.env.ADMIN_ROLE_ID || "",
+    owner_role_id: process.env.OWNER_ROLE_ID || "" // For tagging @Owner
   },
   channels: {
     mod_awareness: process.env.MOD_CHANNEL_ID,    // gumball-deposit
@@ -36,7 +37,7 @@ const CONFIG = {
   rates: {
     starting_tokens: 0,
     credit_per_token: 3,
-    furni_per_token: 20,
+    furni_per_token: 20, // ✅ 20 furni = 1 token
     bulk_packages: [
       { cost: 15, tokens: 5, label: "15 Credits → 5 Tokens" },
       { cost: 25, tokens: 10, label: "25 Credits → 10 Tokens" },
@@ -187,6 +188,11 @@ async function sendWinLog(user, habboName, prize, group, price, tokensWon) {
   } catch (err) { console.error("Win log error:", err.message); }
 }
 
+// Get @Owner mention
+function getOwnerMention() {
+  return CONFIG.bot.owner_role_id ? `<@&${CONFIG.bot.owner_role_id}>` : "";
+}
+
 // ==============================================
 // BOT SETUP
 // ==============================================
@@ -219,7 +225,10 @@ client.once("ready", async () => {
     new SlashCommandBuilder().setName("depositcoins").setDescription("Submit a credit deposit")
       .addIntegerOption(o => o.setName("amount").setDescription("Number of credits").setRequired(true)),
     new SlashCommandBuilder().setName("depositfurni").setDescription("Submit a furni deposit")
-      .addStringOption(o => o.setName("items").setDescription("List of furni items").setRequired(true)),
+      .addIntegerOption(o => o.setName("quantity").setDescription("Total number of furni items").setRequired(true))
+      .addStringOption(o => o.setName("items").setDescription("List of furni names/items").setRequired(true)),
+    new SlashCommandBuilder().setName("claim").setDescription("Claim a prize you won")
+      .addStringOption(o => o.setName("prize").setDescription("Name of the prize to claim").setRequired(true)),
     new SlashCommandBuilder().setName("addtokens").setDescription("Add tokens to a user")
       .addUserOption(o => o.setName("user").setDescription("Target user").setRequired(true))
       .addIntegerOption(o => o.setName("amount").setDescription("Amount of tokens").setRequired(true)),
@@ -286,8 +295,8 @@ client.on("interactionCreate", async interaction => {
 Earn or buy tokens, then spin the machine for prizes!
 
 💱 **Exchange Rates**
-• 3 Credits = 1 Token
-• 20 Furni = 1 Token
+• ${CONFIG.rates.credit_per_token} Credits = 1 Token
+• ${CONFIG.rates.furni_per_token} Furni = 1 Token
 
 🛒 **Bulk Packages**
 • 15 Credits → 5 Tokens
@@ -317,7 +326,9 @@ Use \`/gumball\` — **1 Token per spin**
             '✅ **Live Prices**: Pulls real‑time values from FurniEye',
             '✅ **Full Logging**: Tracks wins, deposits, and stock changes',
             '✅ **Prize Displays**: Shows item image, rarity, and remaining stock',
-            '✅ **Stable Commands**: No duplicates or errors',
+            '✅ **Deposit System**: Auto‑calculates tokens (20 furni = 1 token)',
+            '✅ **Approval Buttons**: Working properly with avatar previews',
+            '✅ **Owner Tagging**: Automatically notifies @owner for new requests',
             '✅ **Ready for Deployment**: Works on Koyeb/any host'
           ];
           const desc = updates.map(line => `• ${line}`).join("\n\n");
@@ -332,23 +343,48 @@ Use \`/gumball\` — **1 Token per spin**
         case "depositcoins": {
           const habbo = await autoLinkVerified(interaction.member);
           if (!habbo) return interaction.reply({ content: "❌ Verify your account first", flags: 64 });
+
           const amount = interaction.options.getInteger("amount");
           const tokens = {15:5, 25:10, 50:25}[amount] || Math.floor(amount / CONFIG.rates.credit_per_token);
           const depId = Date.now();
-          DATA.deposit_requests[depId] = { type: "coins", userId: interaction.user.id, habbo, amount, tokens, status: "pending" };
+
+          DATA.deposit_requests[depId] = {
+            type: "coins",
+            userId: interaction.user.id,
+            habbo,
+            amount,
+            tokens,
+            status: "pending"
+          };
           saveData();
 
           const embed = new EmbedBuilder()
             .setTitle("💸 New Credit Deposit")
-            .setDescription(`**User:** ${interaction.user}\n**Habbo:** ${habbo}\n**Amount:** ${amount}c\n**Tokens:** ${tokens}`)
-            .setColor("#f39c12");
+            .setThumbnail(getAvatar(habbo))
+            .setDescription(`
+**User:** ${interaction.user}
+**Habbo:** ${habbo}
+**Amount:** ${amount}c
+**Tokens to give:** ${tokens}
+**Rate:** ${CONFIG.rates.credit_per_token}c = 1 Token
+            `.trim())
+            .setColor("#f39c12")
+            .setTimestamp();
+
           const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId(`dep_approve_${depId}`).setLabel("✅ Approve").setStyle(ButtonStyle.Success),
             new ButtonBuilder().setCustomId(`dep_deny_${depId}`).setLabel("❌ Deny").setStyle(ButtonStyle.Danger)
           );
 
           const modChan = await client.channels.fetch(CONFIG.channels.mod_awareness).catch(() => null);
-          if (modChan) await modChan.send({ embeds: [embed], components: [row] });
+          if (modChan) {
+            await modChan.send({
+              content: `${getOwnerMention()} New credit deposit request`,
+              embeds: [embed],
+              components: [row]
+            });
+          } else console.error("❌ Could not find mod/awareness channel");
+
           await sendLog(`💸 Deposit #${depId} submitted by ${interaction.user.tag}`, "#f39c12");
           return interaction.reply({ content: "✅ Deposit sent for review", flags: 64 });
         }
@@ -356,24 +392,97 @@ Use \`/gumball\` — **1 Token per spin**
         case "depositfurni": {
           const habbo = await autoLinkVerified(interaction.member);
           if (!habbo) return interaction.reply({ content: "❌ Verify your account first", flags: 64 });
+
+          const quantity = interaction.options.getInteger("quantity");
           const items = interaction.options.getString("items");
+          const tokens = Math.floor(quantity / CONFIG.rates.furni_per_token);
           const depId = Date.now();
-          DATA.deposit_requests[depId] = { type: "furni", userId: interaction.user.id, habbo, items, tokens: null, status: "pending" };
+
+          DATA.deposit_requests[depId] = {
+            type: "furni",
+            userId: interaction.user.id,
+            habbo,
+            quantity,
+            items,
+            tokens,
+            status: "pending"
+          };
           saveData();
 
           const embed = new EmbedBuilder()
             .setTitle("📦 New Furni Deposit")
-            .setDescription(`**User:** ${interaction.user}\n**Habbo:** ${habbo}\n**Items:** ${items}\n**Rate:** 20 Furni = 1 Token`)
-            .setColor("#9b59b6");
+            .setThumbnail(getAvatar(habbo))
+            .setDescription(`
+**User:** ${interaction.user}
+**Habbo:** ${habbo}
+**Total Furni:** ${quantity}
+**Items:** ${items}
+**Tokens to give:** ${tokens}
+**Rate:** ${CONFIG.rates.furni_per_token} Furni = 1 Token
+            `.trim())
+            .setColor("#9b59b6")
+            .setTimestamp();
+
           const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId(`dep_approve_${depId}`).setLabel("✅ Approve").setStyle(ButtonStyle.Success),
             new ButtonBuilder().setCustomId(`dep_deny_${depId}`).setLabel("❌ Deny").setStyle(ButtonStyle.Danger)
           );
 
           const modChan = await client.channels.fetch(CONFIG.channels.mod_awareness).catch(() => null);
-          if (modChan) await modChan.send({ embeds: [embed], components: [row] });
-          await sendLog(`📦 Furni deposit #${depId} submitted by ${interaction.user.tag}`, "#9b59b6");
+          if (modChan) {
+            await modChan.send({
+              content: `${getOwnerMention()} New furni deposit request`,
+              embeds: [embed],
+              components: [row]
+            });
+          } else console.error("❌ Could not find mod/awareness channel");
+
+          await sendLog(`📦 Furni Deposit #${depId} submitted by ${interaction.user.tag} | ${quantity} items = ${tokens} tokens`, "#9b59b6");
           return interaction.reply({ content: "✅ Deposit sent for review", flags: 64 });
+        }
+
+        case "claim": {
+          const habbo = await autoLinkVerified(interaction.member);
+          if (!habbo) return interaction.reply({ content: "❌ Verify your account first", flags: 64 });
+
+          const prize = interaction.options.getString("prize");
+          const claimId = Date.now();
+
+          DATA.pending_claims[claimId] = {
+            userId: interaction.user.id,
+            habbo,
+            prize,
+            status: "pending"
+          };
+          saveData();
+
+          const embed = new EmbedBuilder()
+            .setTitle("🏆 New Prize Claim")
+            .setThumbnail(getAvatar(habbo))
+            .setDescription(`
+**User:** ${interaction.user}
+**Habbo:** ${habbo}
+**Prize:** ${prize}
+            `.trim())
+            .setColor("#f1c40f")
+            .setTimestamp();
+
+          const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`claim_approve_${claimId}`).setLabel("✅ Approve").setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId(`claim_deny_${claimId}`).setLabel("❌ Deny").setStyle(ButtonStyle.Danger)
+          );
+
+          const modChan = await client.channels.fetch(CONFIG.channels.mod_awareness).catch(() => null);
+          if (modChan) {
+            await modChan.send({
+              content: `${getOwnerMention()} New prize claim request`,
+              embeds: [embed],
+              components: [row]
+            });
+          }
+
+          await sendLog(`🏆 Claim #${claimId} submitted by ${interaction.user.tag} for ${prize}`, "#f1c40f");
+          return interaction.reply({ content: "✅ Claim sent for review", flags: 64 });
         }
 
         case "gumball": {
@@ -417,6 +526,8 @@ Use \`/gumball\` — **1 Token per spin**
 
 🪙 **Tokens Won:** +${tokensWon}
 💰 **New Balance:** ${user.balance}
+
+💡 Use \`/claim\` to request your prize!
               `.trim())
               .setColor(group.color)
               .setTimestamp()
@@ -526,23 +637,54 @@ ${list.join("\n")}
       }
     }
 
+    // ------------------------------
+    // BUTTON HANDLER
+    // ------------------------------
     if (interaction.isButton()) {
-      if (!isStaff) return interaction.reply({ content: "❌ Only staff can do this", flags: 64 });
+      if (!isStaff) return interaction.reply({ content: "❌ Only staff can manage requests", flags: 64 });
 
-      const [action, type, depIdStr] = interaction.customId.split("_");
+      const parts = interaction.customId.split("_");
+      const action = parts[0];
+      const type = parts[1];
+      const id = parseInt(parts[2]);
+
       if (action === "dep") {
-        const depId = parseInt(depIdStr);
-        const dep = DATA.deposit_requests[depId];
-        if (!dep) return interaction.reply({ content: "❌ Request not found", flags: 64 });
+        const dep = DATA.deposit_requests[id];
+        if (!dep) return interaction.reply({ content: "❌ This deposit no longer exists", flags: 64 });
 
         if (type === "approve") {
           ensureUser(dep.userId).balance += dep.tokens;
           saveData();
-          await sendLog(`✅ Deposit #${depId} APPROVED by ${interaction.user.tag}`, "#2ecc71");
-          await interaction.update({ embeds: [EmbedBuilder.from(interaction.message.embeds[0]).setColor("#2ecc71").setDescription(`✅ Approved by ${interaction.user.tag}`)], components: [] });
+          await sendLog(`✅ Deposit #${id} APPROVED by ${interaction.user.tag} | +${dep.tokens} tokens`, "#2ecc71");
+          await interaction.update({
+            embeds: [EmbedBuilder.from(interaction.message.embeds[0]).setColor("#2ecc71").setDescription(`✅ Approved by ${interaction.user.tag}\n+${dep.tokens} tokens`)],
+            components: []
+          });
         } else if (type === "deny") {
-          await sendLog(`❌ Deposit #${depId} DENIED by ${interaction.user.tag}`, "#e74c3c");
-          await interaction.update({ embeds: [EmbedBuilder.from(interaction.message.embeds[0]).setColor("#e74c3c").setDescription(`❌ Denied by ${interaction.user.tag}`)], components: [] });
+          await sendLog(`❌ Deposit #${id} DENIED by ${interaction.user.tag}`, "#e74c3c");
+          await interaction.update({
+            embeds: [EmbedBuilder.from(interaction.message.embeds[0]).setColor("#e74c3c").setDescription(`❌ Denied by ${interaction.user.tag}`)],
+            components: []
+          });
+        }
+      }
+
+      if (action === "claim") {
+        const claim = DATA.pending_claims[id];
+        if (!claim) return interaction.reply({ content: "❌ This claim no longer exists", flags: 64 });
+
+        if (type === "approve") {
+          await sendLog(`✅ Claim #${id} APPROVED by ${interaction.user.tag} | Prize: ${claim.prize}`, "#2ecc71");
+          await interaction.update({
+            embeds: [EmbedBuilder.from(interaction.message.embeds[0]).setColor("#2ecc71").setDescription(`✅ Approved by ${interaction.user.tag}\nPrize will be sent to ${claim.habbo}`)],
+            components: []
+          });
+        } else if (type === "deny") {
+          await sendLog(`❌ Claim #${id} DENIED by ${interaction.user.tag}`, "#e74c3c");
+          await interaction.update({
+            embeds: [EmbedBuilder.from(interaction.message.embeds[0]).setColor("#e74c3c").setDescription(`❌ Denied by ${interaction.user.tag}`)],
+            components: []
+          });
         }
       }
     }

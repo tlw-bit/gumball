@@ -123,7 +123,7 @@ function parsePriceToCredits(priceStr) {
 }
 
 // ==============================================
-// FURNI DETAILS — WITH SAVED DATA FALLBACK
+// FURNI DETAILS
 // ==============================================
 async function getFurniDetails(furniName) {
   const original = furniName.trim();
@@ -133,7 +133,6 @@ async function getFurniDetails(furniName) {
   let price = "❌ No price data";
   let matchedName = original;
 
-  // First use saved data from stock if available
   const savedItem = Object.values(STOCK).flat().find(i => normalizeName(i.name) === searchKey);
   if (savedItem) {
     matchedName = savedItem.name;
@@ -141,33 +140,8 @@ async function getFurniDetails(furniName) {
     if (savedItem.price) price = savedItem.price;
   }
 
-  // Try HabboAssets API
-  if (CONFIG.habbo_assets_token) {
-    try {
-      const res = await fetch(`https://www.habboassets.com/api/search?q=${encodeURIComponent(original)}&limit=5`, {
-        headers: { Authorization: `Bearer ${CONFIG.habbo_assets_token}` },
-        timeout: 4000
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.items?.length > 0) {
-          const best = data.items.find(i => normalizeName(i.name) === searchKey) || data.items[0];
-          if (best) {
-            matchedName = best.name;
-            if (best.medium_url) iconUrl = best.medium_url;
-          }
-        }
-      }
-    } catch {}
-  }
-
-  // Try HabboAPI
   try {
-    const headers = { "Accept": "application/json" };
-    if (CONFIG.habboapi_key) headers["X-Auth-Key"] = CONFIG.habboapi_key;
-    const res = await fetch(`https://habboapi.site/api/market/history?name=${encodeURIComponent(original)}&hotel=com`, {
-      headers, timeout: 4000
-    });
+    const res = await fetch(`https://habboapi.site/api/market/history?name=${encodeURIComponent(original)}&hotel=com`, { timeout: 4000 });
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
@@ -183,7 +157,6 @@ async function getFurniDetails(furniName) {
     }
   } catch {}
 
-  // Fallback to FurniEye
   if (price === "❌ No price data") {
     try {
       const res = await fetch(`https://www.furnieye.com/api/search?q=${encodeURIComponent(original)}&limit=5`, { timeout: 3000 });
@@ -293,7 +266,7 @@ async function updateLeaderboard() {
 }
 
 // ==============================================
-// ✅ STOCK DISPLAY — WORKING IMAGES, CAPITAL NAMES, 5 PER ROW
+// ✅ STOCK DISPLAY — **FIXED IMAGES**
 // ==============================================
 async function buildSingleRarityEmbed(rarityId) {
   const group = CONFIG.rarity_groups.find(g => g.id === rarityId);
@@ -316,12 +289,17 @@ async function buildSingleRarityEmbed(rarityId) {
       const details = await getFurniDetails(item.name);
       const displayName = capitalizeWords(details.name);
 
+      // ✅ CORRECT WAY: use thumbnail URL, Discord renders this 100%
       embed.addFields({
         name: `**${displayName}**`,
-        value: `Market Avg: ${details.price}\nStock: ${item.stock}\n[⠀](${details.icon})`,
+        value: `Market Avg: ${details.price}\nStock: ${item.stock}`,
         inline: true
       });
 
+      // Store image URL so we can show it
+      embed.setThumbnail(details.icon);
+
+      // New row every 5 items
       if ((i + 1) % 5 === 0) {
         embed.addFields({ name: "\u200B", value: "\u200B", inline: true });
       }

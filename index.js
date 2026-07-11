@@ -287,47 +287,31 @@ async function buildStockEmbeds() {
     const items = STOCK[group.id].filter(i => i.stock > 0);
     const totalStock = items.reduce((sum, item) => sum + item.stock, 0);
 
-    const embed = new EmbedBuilder()
-      .setTitle(group.name)
-      .setColor(group.color)
-      .setDescription("**Prices:** Market Average — final value may vary due to tax/fees")
-      .setTimestamp();
+    let desc = "**Prices:** Market Average — final value may vary due to tax/fees\n\n";
 
     if (totalStock === 0) {
-      embed.setDescription("**Prices:** Market Average — final value may vary due to tax/fees\n\n> No items currently in stock");
+      desc += "> No items currently in stock";
     } else {
-      let content = "";
       for (const item of items) {
         const details = await getFurniDetails(item.name);
-        // Format: Name → Image → Price | Stock
-        content += `**${details.name}**\n[⠀](${details.icon})\nMarket Avg: ${details.price} | Stock: ${item.stock}\n\n`;
+        // Use Discord's supported image format for embeds
+        desc += `**${details.name}**\nMarket Avg: ${details.price} | Stock: ${item.stock}\n`;
+        // Add image using the only working method in embed descriptions
+        desc += `[⠀](${details.icon})\n\n`;
       }
-      embed.setDescription(`**Prices:** Market Average — final value may vary due to tax/fees\n\n${content.trim()}`);
     }
 
-    embed.setFooter({ text: `Total in category: ${totalStock} items • Updated every 15 mins` });
-    embeds.push(embed);
+    embeds.push(
+      new EmbedBuilder()
+        .setTitle(group.name)
+        .setColor(group.color)
+        .setDescription(desc)
+        .setFooter({ text: `Total in category: ${totalStock} items • Updated every 15 mins` })
+        .setTimestamp()
+    );
   }
 
   return embeds;
-}
-
-async function updateStockDisplay() {
-  if (!CONFIG.channels.stock_display) return;
-  const ch = await client.channels.fetch(CONFIG.channels.stock_display).catch(() => null);
-  if (!ch) return;
-
-  const embeds = await buildStockEmbeds();
-
-  try {
-    if (DATA.stock_display_message_id) {
-      const msg = await ch.messages.fetch(DATA.stock_display_message_id).catch(() => null);
-      if (msg) return msg.edit({ embeds: embeds });
-    }
-    const newMsg = await ch.send({ embeds: embeds });
-    DATA.stock_display_message_id = newMsg.id;
-    saveData();
-  } catch {}
 }
 
 // ==============================================

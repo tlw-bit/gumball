@@ -278,7 +278,7 @@ async function updateLeaderboard() {
 }
 
 // ==============================================
-// ✅ STOCK DISPLAY — DEFINED BEFORE USE + FIXED IMAGES
+// ✅ STOCK DISPLAY — FINAL FIXED VERSION
 // ==============================================
 async function buildStockEmbeds() {
   const embeds = [];
@@ -294,33 +294,23 @@ async function buildStockEmbeds() {
       .setTimestamp();
 
     if (totalStock === 0) {
-      embed.setDescription("**Prices:** Market Average — final value may vary due to tax/fees
-
-> No items currently in stock");
+      embed.setDescription(`**Prices:** Market Average — final value may vary due to tax/fees\n\n> No items currently in stock`);
     } else {
-      // Create a single embed for all items in the rarity group
-      let itemList = "";
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
         const details = await getFurniDetails(item.name);
 
-        // Format each item with its name, price, and stock
-        itemList += `**${i + 1}. ${details.name}**
-`;
-        itemList += `Market Avg: ${details.price} | Stock: ${item.stock}
+        embed.addFields({
+          name: `**${details.name}**`,
+          value: `[⠀](${details.icon})\nMarket Avg: ${details.price}\nStock: ${item.stock}`,
+          inline: true
+        });
 
-`;
+        // Force new row every 5 items
+        if ((i + 1) % 5 === 0) {
+          embed.addFields({ name: "\u200B", value: "\u200B", inline: true });
+        }
       }
-
-      // Set the description to the list of items
-      embed.setDescription(`**Prices:** Market Average — final value may vary due to tax/fees
-
-${itemList}`);
-
-      // Set the image to the first item's image (or a default if none)
-      const firstItem = items[0];
-      const firstDetails = await getFurniDetails(firstItem.name);
-      embed.setImage(firstDetails.icon);
     }
 
     embed.setFooter({ text: `Total in category: ${totalStock} items • Updated every 15 mins` });
@@ -329,6 +319,25 @@ ${itemList}`);
 
   return embeds;
 }
+
+async function updateStockDisplay() {
+  if (!CONFIG.channels.stock_display) return;
+  const ch = await client.channels.fetch(CONFIG.channels.stock_display).catch(() => null);
+  if (!ch) return;
+
+  const embeds = await buildStockEmbeds();
+
+  try {
+    if (DATA.stock_display_message_id) {
+      const msg = await ch.messages.fetch(DATA.stock_display_message_id).catch(() => null);
+      if (msg) return msg.edit({ embeds: embeds });
+    }
+    const newMsg = await ch.send({ embeds: embeds });
+    DATA.stock_display_message_id = newMsg.id;
+    saveData();
+  } catch {}
+}
+
 // ==============================================
 // OTHER HELPERS
 // ==============================================
@@ -369,8 +378,7 @@ const client = new Client({
   ]
 });
 
-// ✅ All functions defined BEFORE clientReady
-client.once("clientReady", async () => {
+client.once("ready", async () => {
   console.log(`✅ Gumball Bot online as ${client.user.tag}`);
   console.log(`🔍 Loaded GUILD_ID: "${CONFIG.bot.guild_id}"`);
 

@@ -294,19 +294,28 @@ async function buildStockEmbeds() {
       .setTimestamp();
 
     if (totalStock === 0) {
-      embed.setDescription(`**Prices:** Market Average — final value may vary due to tax/fees\n\n> No items currently in stock`);
+      embed.setDescription(`**Prices:** Market Average — final value may vary due to tax/fees
+
+> No items currently in stock`);
     } else {
+      // For each item, add its details and a large, clear image
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
         const details = await getFurniDetails(item.name);
 
+        // Add the item's name, price, and stock
         embed.addFields({
-          name: `**${details.name}**`,
-          value: `[⠀](${details.icon})\nMarket Avg: ${details.price}\nStock: ${item.stock}`,
+          name: `**${i + 1}. ${details.name}**`,
+          value: `Market Avg: ${details.price}
+Stock: ${item.stock}`,
           inline: true
         });
 
-        // Force new row every 5 items
+        // Set the image for this item using Discord's official thumbnail method
+        // This ensures the image is large, clear, and always renders correctly
+        embed.setThumbnail(details.icon);
+
+        // Add an invisible field to maintain the 5-items-per-row layout
         if ((i + 1) % 5 === 0) {
           embed.addFields({ name: "\u200B", value: "\u200B", inline: true });
         }
@@ -318,24 +327,6 @@ async function buildStockEmbeds() {
   }
 
   return embeds;
-}
-
-async function updateStockDisplay() {
-  if (!CONFIG.channels.stock_display) return;
-  const ch = await client.channels.fetch(CONFIG.channels.stock_display).catch(() => null);
-  if (!ch) return;
-
-  const embeds = await buildStockEmbeds();
-
-  try {
-    if (DATA.stock_display_message_id) {
-      const msg = await ch.messages.fetch(DATA.stock_display_message_id).catch(() => null);
-      if (msg) return msg.edit({ embeds: embeds });
-    }
-    const newMsg = await ch.send({ embeds: embeds });
-    DATA.stock_display_message_id = newMsg.id;
-    saveData();
-  } catch {}
 }
 
 // ==============================================

@@ -118,7 +118,7 @@ function parsePriceToCredits(priceStr) {
 }
 
 // ==============================================
-// FURNI DETAILS — FIXED IMAGE URLS
+// FURNI DETAILS
 // ==============================================
 async function getFurniDetails(furniName) {
   const original = furniName.trim();
@@ -128,7 +128,6 @@ async function getFurniDetails(furniName) {
   let price = "❌ No price data";
   let matchedName = original;
 
-  // 1. HabboAssets (direct medium image URL)
   if (CONFIG.habbo_assets_token) {
     try {
       const res = await fetch(`https://www.habboassets.com/api/search?q=${encodeURIComponent(original)}&limit=5`, {
@@ -148,11 +147,9 @@ async function getFurniDetails(furniName) {
     } catch {}
   }
 
-  // 2. HabboAPI fallback — direct PNG URL
   try {
     const headers = { "Accept": "application/json" };
     if (CONFIG.habboapi_key) headers["X-Auth-Key"] = CONFIG.habboapi_key;
-
     const res = await fetch(`https://habboapi.site/api/market/history?name=${encodeURIComponent(original)}&hotel=com`, {
       headers, timeout: 4000
     });
@@ -172,7 +169,6 @@ async function getFurniDetails(furniName) {
     }
   } catch {}
 
-  // 3. FurniEye fallback price
   if (price === "❌ No price data") {
     try {
       const res = await fetch(`https://www.furnieye.com/api/search?q=${encodeURIComponent(original)}&limit=5`, { timeout: 3000 });
@@ -188,7 +184,6 @@ async function getFurniDetails(furniName) {
 
   return { icon: iconUrl, price, name: matchedName };
 }
-
 
 // ==============================================
 // WEIGHTED RARITY SELECTION
@@ -281,8 +276,9 @@ async function updateLeaderboard() {
     saveData();
   } catch {}
 }
+
 // ==============================================
-// STOCK DISPLAY — IMAGES ACTUALLY SHOWING
+// STOCK DISPLAY — DEFINED EARLY
 // ==============================================
 async function buildStockEmbeds() {
   const embeds = [];
@@ -300,23 +296,25 @@ async function buildStockEmbeds() {
     if (totalStock === 0) {
       embed.setDescription("**Prices:** Market Average — final value may vary due to tax/fees\n\n> No items currently in stock");
     } else {
-      // Add items in rows of 5
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
         const details = await getFurniDetails(item.name);
 
-        // Layout: Name first, then image, then price + stock
         embed.addFields({
           name: `**${details.name}**`,
           value: `Market Avg: ${details.price} | Stock: ${item.stock}`,
           inline: true
         });
 
-        // Set the image as a small inline thumbnail for this field
-        embed.setThumbnail(details.icon);
+        // Add image below the name
+        embed.addFields({
+          name: "\u200B",
+          value: `[ ](${details.icon})`,
+          inline: true
+        });
 
-        // New row after every 5 items
-        if ((i + 1) % 5 === 0) {
+        // Spacer after every 2 items = 1 full row
+        if ((i + 1) % 2 === 0) {
           embed.addFields({ name: "\u200B", value: "\u200B", inline: true });
         }
       }
@@ -328,6 +326,24 @@ async function buildStockEmbeds() {
   }
 
   return embeds;
+}
+
+async function updateStockDisplay() {
+  if (!CONFIG.channels.stock_display) return;
+  const ch = await client.channels.fetch(CONFIG.channels.stock_display).catch(() => null);
+  if (!ch) return;
+
+  const embeds = await buildStockEmbeds();
+
+  try {
+    if (DATA.stock_display_message_id) {
+      const msg = await ch.messages.fetch(DATA.stock_display_message_id).catch(() => null);
+      if (msg) return msg.edit({ embeds: embeds });
+    }
+    const newMsg = await ch.send({ embeds: embeds });
+    DATA.stock_display_message_id = newMsg.id;
+    saveData();
+  } catch {}
 }
 
 // ==============================================
@@ -370,7 +386,7 @@ const client = new Client({
   ]
 });
 
-// ✅ Fixed: Use clientReady instead of ready
+// ✅ Fixed: All functions defined BEFORE clientReady
 client.once("clientReady", async () => {
   console.log(`✅ Gumball Bot online as ${client.user.tag}`);
   console.log(`🔍 Loaded GUILD_ID: "${CONFIG.bot.guild_id}"`);

@@ -9,7 +9,7 @@ const {
   ButtonStyle,
   SlashCommandBuilder,
   PermissionsBitField,
-  MessageFlags  // <-- ADD THIS LINE HERE
+  MessageFlags
 } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
@@ -124,11 +124,11 @@ async function getFurniDetails(furniName) {
   const original = furniName.trim();
   const searchKey = normalizeName(original);
 
-  let iconUrl = "https://www.habboassets.com/assets/images/furniture/unknown.png";
+  let iconUrl = CONFIG.default_image;
   let price = "❌ No price data";
   let matchedName = original;
 
-  // 1. HabboAssets (direct medium image)
+  // 1. HabboAssets
   if (CONFIG.habbo_assets_token) {
     try {
       const res = await fetch(`https://www.habboassets.com/api/search?q=${encodeURIComponent(original)}&limit=5`, {
@@ -148,7 +148,7 @@ async function getFurniDetails(furniName) {
     } catch {}
   }
 
-  // 2. HabboAPI fallback — direct .png URL
+  // 2. HabboAPI fallback
   try {
     const headers = { "Accept": "application/json" };
     if (CONFIG.habboapi_key) headers["X-Auth-Key"] = CONFIG.habboapi_key;
@@ -164,7 +164,7 @@ async function getFurniDetails(furniName) {
         if (best) {
           matchedName = best.FurniName;
           if (best.marketData?.averagePrice) price = `${best.marketData.averagePrice}c`;
-          if (iconUrl.includes("unknown")) {
+          if (iconUrl === CONFIG.default_image) {
             iconUrl = `https://images.habboapi.site/furni/${best.ClassName}.png`;
           }
         }
@@ -187,52 +187,6 @@ async function getFurniDetails(furniName) {
   }
 
   return { icon: iconUrl, price, name: matchedName };
-}
-
-// ==============================================
-// STOCK DISPLAY — IMAGES RENDERED CORRECTLY
-// ==============================================
-async function buildStockEmbeds() {
-  const embeds = [];
-
-  for (const group of CONFIG.rarity_groups) {
-    const items = STOCK[group.id].filter(i => i.stock > 0);
-    const totalStock = items.reduce((sum, item) => sum + item.stock, 0);
-
-    const embed = new EmbedBuilder()
-      .setTitle(group.name)
-      .setColor(group.color)
-      .setDescription("**Prices:** Market Average — final value may vary due to tax/fees")
-      .setTimestamp();
-
-    if (totalStock === 0) {
-      embed.setDescription("**Prices:** Market Average — final value may vary due to tax/fees\n\n> No items currently in stock");
-    } else {
-      // Add items in rows of 5
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i];
-        const details = await getFurniDetails(item.name);
-
-        // Layout: Name → Image → Price | Stock
-        embed.addFields({
-          name: `**${details.name}**`,
-          value: `[ ](${details.icon})\nMarket Avg: ${details.price} | Stock: ${item.stock}`,
-          inline: true
-        });
-
-        // New row after every 5 items
-        if ((i + 1) % 5 === 0) {
-          embed.addFields({ name: "\u200B", value: "\u200B", inline: true });
-        }
-      }
-
-      embed.setFooter({ text: `Total in category: ${totalStock} items • Updated every 15 mins` });
-    }
-
-    embeds.push(embed);
-  }
-
-  return embeds;
 }
 
 // ==============================================
@@ -327,6 +281,66 @@ async function updateLeaderboard() {
   } catch {}
 }
 
+// ==============================================
+// STOCK DISPLAY — FIXED IMAGES & LAYOUT
+// ==============================================
+async function buildStockEmbeds() {
+  const embeds = [];
+
+  for (const group of CONFIG.rarity_groups) {
+    const items = STOCK[group.id].filter(i => i.stock > 0);
+    const totalStock = items.reduce((sum, item) => sum + item.stock, 0);
+
+    const embed = new EmbedBuilder()
+      .setTitle(group.name)
+      .setColor(group.color)
+      .setDescription("**Prices:** Market Average — final value may vary due to tax/fees")
+      .setTimestamp();
+
+    if (totalStock === 0) {
+      embed.setDescription("**Prices:** Market Average — final value may vary due to tax/fees\n\n> No items currently in stock");
+    } else {
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const details = await getFurniDetails(item.name);
+
+        embed.addFields({
+          name: `**${details.name}**`,
+          value: `[ ](${details.icon})\nMarket Avg: ${details.price} | Stock: ${item.stock}`,
+          inline: true
+        });
+
+        if ((i + 1) % 5 === 0) {
+          embed.addFields({ name: "\u200B", value: "\u200B", inline: true });
+        }
+      }
+
+      embed.setFooter({ text: `Total in category: ${totalStock} items • Updated every 15 mins` });
+    }
+
+    embeds.push(embed);
+  }
+
+  return embeds;
+}
+
+async function updateStockDisplay() {
+  if (!CONFIG.channels.stock_display) return;
+  const ch = await client.channels.fetch(CONFIG.channels.stock_display).catch(() => null);
+  if (!ch) return;
+
+  const embeds = await buildStockEmbeds();
+
+  try {
+    if (DATA.stock_display_message_id) {
+      const msg = await ch.messages.fetch(DATA.stock_display_message_id).catch(() => null);
+      if (msg) return msg.edit({ embeds: embeds });
+    }
+    const newMsg = await ch.send({ embeds: embeds });
+    DATA.stock_display_message_id = newMsg.id;
+    saveData();
+  } catch {}
+}
 
 // ==============================================
 // OTHER HELPERS
@@ -368,7 +382,8 @@ const client = new Client({
   ]
 });
 
-client.once("ready", async () => {
+// ✅ Fixed: Use clientReady instead of ready
+client.once("clientReady", async () => {
   console.log(`✅ Gumball Bot online as ${client.user.tag}`);
   console.log(`🔍 Loaded GUILD_ID: "${CONFIG.bot.guild_id}"`);
 

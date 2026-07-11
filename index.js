@@ -21,22 +21,22 @@ const fetch = require('node-fetch');
 // ==============================================
 const CONFIG = {
   bot: {
-    token: process.env.BOT_TOKEN || "",
-    guild_id: process.env.GUILD_ID || "",
-    verified_role_id: process.env.VERIFIED_ROLE_ID || "",
-    admin_role_id: process.env.ADMIN_ROLE_ID || "",
-    owner_role_id: process.env.OWNER_ROLE_ID || ""
+    token: process.env.BOT_TOKEN?.trim() || "",
+    guild_id: process.env.GUILD_ID?.trim() || "",
+    verified_role_id: process.env.VERIFIED_ROLE_ID?.trim() || "",
+    admin_role_id: process.env.ADMIN_ROLE_ID?.trim() || "",
+    owner_role_id: process.env.OWNER_ROLE_ID?.trim() || ""
   },
   channels: {
-    mod_awareness: process.env.MOD_CHANNEL_ID || "",
-    claims: process.env.CLAIMS_CHANNEL_ID || "",
-    log: process.env.LOG_CHANNEL_ID || "",
-    stock_display: process.env.STOCK_DISPLAY_CHANNEL_ID || "",
-    leaderboard: process.env.LEADERBOARD_CHANNEL_ID || ""
+    mod_awareness: process.env.MOD_CHANNEL_ID?.trim() || "",
+    claims: process.env.CLAIMS_CHANNEL_ID?.trim() || "",
+    log: process.env.LOG_CHANNEL_ID?.trim() || "",
+    stock_display: process.env.STOCK_DISPLAY_CHANNEL_ID?.trim() || "",
+    leaderboard: process.env.LEADERBOARD_CHANNEL_ID?.trim() || ""
   },
-  habbo_assets_token: process.env.HABBO_ASSETS_TOKEN || "",
-  habbofurni_token: process.env.HABBOFURNI_TOKEN || "",
-  habboapi_key: process.env.HABBOAPI_KEY || "",
+  habbo_assets_token: process.env.HABBO_ASSETS_TOKEN?.trim() || "",
+  habbofurni_token: process.env.HABBOFURNI_TOKEN?.trim() || "",
+  habboapi_key: process.env.HABBOAPI_KEY?.trim() || "",
   room_link: "https://www.habbo.com/room/1234567",
   rates: {
     starting_tokens: 0,
@@ -74,7 +74,7 @@ if (fs.existsSync(STOCK_PATH)) {
   } catch {
     fs.writeFileSync(STOCK_PATH, JSON.stringify(STOCK, null, 2));
   }
-}
+} else fs.writeFileSync(STOCK_PATH, JSON.stringify(STOCK, null, 2));
 
 let DATA = {
   users: {},
@@ -91,7 +91,7 @@ if (fs.existsSync(DATA_PATH)) {
   } catch {
     fs.writeFileSync(DATA_PATH, JSON.stringify(DATA, null, 2));
   }
-}
+} else fs.writeFileSync(DATA_PATH, JSON.stringify(DATA, null, 2));
 
 function saveStock() { fs.writeFileSync(STOCK_PATH, JSON.stringify(STOCK, null, 2)); }
 function saveData() { fs.writeFileSync(DATA_PATH, JSON.stringify(DATA, null, 2)); }
@@ -363,10 +363,22 @@ const client = new Client({
   ]
 });
 
-client.once("ready", async () => {
+client.once("clientReady", async () => {
   console.log(`✅ Gumball Bot online as ${client.user.tag}`);
-  const guild = CONFIG.guild_id ? client.guilds.cache.get(CONFIG.guild_id) : null;
-  if (!guild) return console.error("❌ Invalid GUILD_ID");
+  console.log(`🔍 Loaded GUILD_ID: "${CONFIG.bot.guild_id}"`);
+
+  if (!CONFIG.bot.guild_id || !/^\d+$/.test(CONFIG.bot.guild_id)) {
+    console.error("❌ GUILD_ID is empty or invalid — check your .env file!");
+    return;
+  }
+
+  const guild = client.guilds.cache.get(CONFIG.bot.guild_id);
+  if (!guild) {
+    console.error("❌ Could not find server — make sure the bot is invited and the ID is correct!");
+    return;
+  }
+
+  console.log(`✅ Connected to server: ${guild.name} (${guild.id})`);
 
   const commands = [
     new SlashCommandBuilder().setName("help").setDescription("Show all commands"),
@@ -391,7 +403,7 @@ client.once("ready", async () => {
     new SlashCommandBuilder().setName("removestock").setDescription("Remove items from stock")
       .addStringOption(o => o.setName("group").setDescription("Rarity group").setRequired(true))
       .addStringOption(o => o.setName("name").setDescription("Furni name").setRequired(true))
-      .addIntegerOption(o => o.setName("amount").setDescription("Quantity").setRequired(true)),
+      .addIntegerOption(o => o.setName("amount").setDescription("Quantity to remove").setRequired(true)),
     new SlashCommandBuilder().setName("addtokens").setDescription("Give tokens to user")
       .addUserOption(o => o.setName("user").setDescription("Target user").setRequired(true))
       .addIntegerOption(o => o.setName("amount").setDescription("Number of tokens").setRequired(true)),
@@ -399,14 +411,19 @@ client.once("ready", async () => {
       .addUserOption(o => o.setName("user").setDescription("Target user").setRequired(true))
       .addIntegerOption(o => o.setName("amount").setDescription("Number of tokens").setRequired(true)),
     new SlashCommandBuilder().setName("history").setDescription("[STAFF] View user history and profit percentage")
-      .addUserOption(o => o.setName("user").setDescription("User to check").setRequired(true))
+      .addUserOption(o => o.setName("user").setDescription("User to check").setRequired(true)),
+    new SlashCommandBuilder().setName("resetleaderboard").setDescription("[STAFF] Manually reset the weekly leaderboard")
   ];
 
-  await guild.commands.set(commands);
-  console.log("✅ All commands registered");
+  try {
+    await guild.commands.set(commands);
+    console.log("✅ All slash commands registered successfully");
+  } catch (err) {
+    console.error("❌ Failed to register commands:", err.message);
+  }
 
   cron.schedule("*/15 * * * *", updateStockDisplay);
-  cron.schedule("0 18 * * 0", resetWeeklyStats); // Every Sunday at 6PM
+  cron.schedule("0 18 * * 0", resetWeeklyStats);
   await updateStockDisplay();
   await updateLeaderboard();
 });
@@ -416,11 +433,11 @@ client.once("ready", async () => {
 // ==============================================
 client.on("interactionCreate", async interaction => {
   const isStaff = interaction.member?.permissions?.has(PermissionsBitField.Flags.ManageGuild) ||
-    (CONFIG.admin_role_id && interaction.member?.roles?.cache?.has(CONFIG.admin_role_id));
+    (CONFIG.bot.admin_role_id && interaction.member?.roles?.cache?.has(CONFIG.bot.admin_role_id));
 
   try {
     if (interaction.isChatInputCommand()) {
-      const isPublic = ["showprizes", "howtoplay", "help"].includes(interaction.commandName);
+      const isPublic = ["showprizes", "howtoplay", "help", "balance", "gumball", "claim", "depositcoins", "depositfurni"].includes(interaction.commandName);
       await interaction.deferReply({ flags: isPublic ? 0 : MessageFlags.Ephemeral });
 
       switch (interaction.commandName) {
@@ -430,7 +447,7 @@ client.on("interactionCreate", async interaction => {
 **User**
 \`/balance\` • \`/howtoplay\` • \`/depositcoins\` • \`/depositfurni\` • \`/gumball\` • \`/claim\` • \`/showprizes\`
 **Staff**
-\`/addstock\` • \`/removestock\` • \`/addtokens\` • \`/removetokens\` • \`/history\``
+\`/addstock\` • \`/removestock\` • \`/addtokens\` • \`/removetokens\` • \`/history\` • \`/resetleaderboard\``
           });
         }
 
@@ -471,6 +488,12 @@ client.on("interactionCreate", async interaction => {
             .setTimestamp();
 
           return interaction.editReply({ embeds: [embed] });
+        }
+
+        case "resetleaderboard": {
+          if (!isStaff) return interaction.editReply({ content: "❌ No permission" });
+          resetWeeklyStats();
+          return interaction.editReply({ content: "✅ Weekly leaderboard and stats have been reset manually." });
         }
 
         case "addstock": {
@@ -616,7 +639,7 @@ client.on("interactionCreate", async interaction => {
           const claimsCh = await client.channels.fetch(CONFIG.channels.claims).catch(() => null);
           if (claimsCh) {
             await claimsCh.send({
-              content: `<@&${CONFIG.admin_role_id}> New claim to deliver!`,
+              content: `<@&${CONFIG.bot.admin_role_id}> New claim to deliver!`,
               embeds: [confirmEmbed]
             });
           }
@@ -660,7 +683,7 @@ client.on("interactionCreate", async interaction => {
           );
 
           const modCh = await client.channels.fetch(CONFIG.channels.mod_awareness).catch(() => null);
-          if (modCh) await modCh.send({ content: `<@&${CONFIG.admin_role_id}>`, embeds: [modEmbed], components: [row] });
+          if (modCh) await modCh.send({ content: `<@&${CONFIG.bot.admin_role_id}>`, embeds: [modEmbed], components: [row] });
 
           return interaction.editReply({ content: `✅ Deposit submitted! You will receive ${tokens} tokens once approved.` });
         }
@@ -687,7 +710,7 @@ client.on("interactionCreate", async interaction => {
           );
 
           const modCh = await client.channels.fetch(CONFIG.channels.mod_awareness).catch(() => null);
-          if (modCh) await modCh.send({ content: `<@&${CONFIG.admin_role_id}>`, embeds: [modEmbed], components: [row] });
+          if (modCh) await modCh.send({ content: `<@&${CONFIG.bot.admin_role_id}>`, embeds: [modEmbed], components: [row] });
 
           return interaction.editReply({ content: `✅ Deposit submitted! You will receive ${tokens} tokens once approved.` });
         }
@@ -719,7 +742,7 @@ client.on("interactionCreate", async interaction => {
     }
 
     if (interaction.isButton()) {
-      if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild))
+      if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild) && !isStaff)
         return interaction.reply({ content: "❌ No permission", flags: MessageFlags.Ephemeral });
 
       const [action, type, userId] = interaction.customId.split("_");

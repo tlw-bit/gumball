@@ -17,7 +17,7 @@ const cron = require('node-cron');
 const fetch = require('node-fetch');
 
 // ==============================================
-// CONFIGURATION — FULL SETUP
+// CONFIGURATION
 // ==============================================
 const CONFIG = {
   bot: {
@@ -33,10 +33,8 @@ const CONFIG = {
     log: process.env.LOG_CHANNEL_ID || "",
     stock_display: process.env.STOCK_DISPLAY_CHANNEL_ID || ""
   },
-  // API Tokens
   habbo_assets_token: process.env.HABBO_ASSETS_TOKEN || "",
   habbofurni_token: process.env.HABBOFURNI_TOKEN || "",
-  // Game Settings
   room_link: "https://www.habbo.com/room/1234567",
   rates: {
     starting_tokens: 0,
@@ -104,7 +102,7 @@ async function getFurniDetails(furniName) {
   let price = "❌ No price data";
   let matchedName = original;
 
-  // 1. Habbo Assets first
+  // 1. Habbo Assets
   if (CONFIG.habbo_assets_token) {
     try {
       const res = await fetch(`https://habboassets.com/api/search?q=${encodeURIComponent(original)}&limit=20`, {
@@ -126,7 +124,7 @@ async function getFurniDetails(furniName) {
     } catch {}
   }
 
-  // 2. Habbofurni fallback
+  // 2. Habbofurni
   if (iconUrl === CONFIG.default_image && CONFIG.habbofurni_token) {
     try {
       const res = await fetch(`https://habbofurni.com/api/v1/furniture?search=${encodeURIComponent(original)}&per_page=10`, {
@@ -152,9 +150,9 @@ async function getFurniDetails(furniName) {
     } catch {}
   }
 
-  // 3. FurniEye for prices
+  // 3. FurniEye — improved matching
   try {
-    const res = await fetch(`https://www.furnieye.com/api/search?q=${encodeURIComponent(original)}&limit=15`, {
+    const res = await fetch(`https://www.furnieye.com/api/search?q=${encodeURIComponent(original)}&limit=20`, {
       timeout: 5000
     });
     if (res.ok) {
@@ -162,20 +160,26 @@ async function getFurniDetails(furniName) {
       if (data.results?.length > 0) {
         let best = data.results.find(i => normalizeName(i.name) === searchKey);
         if (!best) best = data.results.find(i => normalizeName(i.name).includes(searchKey));
+        if (!best) best = data.results.find(i => searchKey.includes(normalizeName(i.name)));
         if (!best) best = data.results[0];
-        if (best?.average_price != null) price = `${best.average_price}c`;
+        if (best?.average_price != null) {
+          price = `${best.average_price}c`;
+        }
       }
     }
   } catch {}
 
-  return { icon: iconUrl, price, exists: true, name: matchedName };
+  return { icon: iconUrl, price, name: matchedName };
 }
 
+// ==============================================
+// ✅ GRID LAYOUT — MATCHES YOUR EXAMPLE
+// ==============================================
 async function buildStockEmbed() {
   const embed = new EmbedBuilder()
     .setTitle("🎁 Available Prizes & Stock")
-    .setDescription("Grouped by rarity • 5 items per row\n*Images: Habbo Assets + Habbofurni • Prices: FurniEye*")
-    .setColor("#7289da")
+    .setDescription("Images: Habbo Assets + Habbofurni • Prices: FurniEye\nItems arranged in rows of 5")
+    .setColor("#1a1a2e")
     .setTimestamp();
 
   for (const group of CONFIG.rarity_groups) {
@@ -185,20 +189,25 @@ async function buildStockEmbed() {
       continue;
     }
 
-    let content = "";
+    // Split into rows of 5 items
     for (let i = 0; i < items.length; i += 5) {
-      const row = items.slice(i, i + 5);
-      const names = [], images = [], info = [];
-      for (const item of row) {
-        const d = await getFurniDetails(item.name);
-        names.push(d.name.padEnd(18));
-        images.push(`[ ](${d.icon})`.padEnd(18));
-        info.push(`${d.price} | Stock: ${item.stock}`.padEnd(22));
+      const rowItems = items.slice(i, i + 5);
+      let rowText = "";
+
+      for (const item of rowItems) {
+        const details = await getFurniDetails(item.name);
+        // Format: [Image] **Name** | Price | Stock
+        rowText += `[▫️](${details.icon}) **${details.name}**\n💰 ${details.price} | 📦 ${item.stock}\n\n`;
       }
-      content += `\`\`\`${names.join(" | ")}\n${images.join(" | ")}\n${info.join(" | ")}\`\`\`\n\n`;
+
+      embed.addFields({
+        name: i === 0 ? group.name : `${group.name} (continued)`,
+        value: rowText.trim(),
+        inline: true
+      });
     }
-    embed.addFields({ name: group.name, value: content.trim(), inline: false });
   }
+
   return embed;
 }
 
@@ -260,7 +269,7 @@ async function sendDM(user, title, message, color = "#2ecc71") {
 }
 
 // ==============================================
-// BOT SETUP
+// BOT SETUP & COMMANDS
 // ==============================================
 const client = new Client({
   intents: [
@@ -276,7 +285,6 @@ client.once("clientReady", async () => {
   const guild = CONFIG.bot.guild_id ? client.guilds.cache.get(CONFIG.bot.guild_id) : null;
   if (!guild) return console.error("❌ GUILD_ID missing or invalid");
 
-  // ✅ ALL COMMANDS REGISTERED
   const commands = [
     new SlashCommandBuilder().setName("help").setDescription("Show all available commands"),
     new SlashCommandBuilder().setName("balance").setDescription("Check your token balance & linked Habbo"),
@@ -317,7 +325,7 @@ client.once("clientReady", async () => {
 });
 
 // ==============================================
-// COMMAND HANDLING — FULL SYSTEM
+// COMMAND & BUTTON HANDLERS
 // ==============================================
 client.on("interactionCreate", async interaction => {
   const isStaff = interaction.member?.permissions?.has(PermissionsBitField.Flags.ManageGuild) ||
@@ -328,7 +336,6 @@ client.on("interactionCreate", async interaction => {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
       switch (interaction.commandName) {
-
         case "help": {
           return interaction.editReply({
             content: `**📋 Gumball Bot Commands**
@@ -375,7 +382,7 @@ client.on("interactionCreate", async interaction => {
             return interaction.editReply({ content: "❌ Use: blue / purple / green / lilac / golden" });
 
           const details = await getFurniDetails(inputName);
-          if (!details.exists && !force)
+          if (!force && details.icon === CONFIG.default_image && details.price === "❌ No price data")
             return interaction.editReply({ content: `⚠️ **"${inputName}"** not found. Use \`force: true\` to add.` });
 
           if (customImage) details.icon = customImage;
@@ -557,41 +564,37 @@ client.on("interactionCreate", async interaction => {
         }
       }
     }
+
+    if (interaction.isButton()) {
+      if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild))
+        return interaction.reply({ content: "❌ No permission", flags: MessageFlags.Ephemeral });
+
+      const [action, type, userId] = interaction.customId.split("_");
+      const req = DATA.deposit_requests[userId];
+      if (!req) return interaction.reply({ content: "❌ Request not found", flags: MessageFlags.Ephemeral });
+
+      if (action === "dep" && type === "approve") {
+        ensureUser(userId).balance += req.tokens;
+        delete DATA.deposit_requests[userId];
+        saveData();
+        const user = await client.users.fetch(userId).catch(() => null);
+        if (user) await sendDM(user, "✅ Deposit Approved", `Your ${req.type} deposit was approved! You received **${req.tokens} Tokens**.`);
+        await sendLog("✅ Deposit Approved", `**${req.habbo}** → ${req.tokens} Tokens`, "#2ecc71");
+        return interaction.update({ content: `✅ Approved → ${req.tokens} Tokens given`, embeds: [], components: [] });
+      }
+
+      if (action === "dep" && type === "deny") {
+        delete DATA.deposit_requests[userId];
+        saveData();
+        const user = await client.users.fetch(userId).catch(() => null);
+        if (user) await sendDM(user, "❌ Deposit Denied", `Your ${req.type} deposit was denied. Please check the rules.`);
+        await sendLog("❌ Deposit Denied", `**${req.habbo}** deposit rejected`, "#e74c3c");
+        return interaction.update({ content: `❌ Denied`, embeds: [], components: [] });
+      }
+    }
   } catch (err) {
     console.error("❌ Error:", err);
     if (interaction.deferred) interaction.editReply({ content: "❌ Something went wrong." }).catch(() => {});
-  }
-});
-
-// ==============================================
-// BUTTON HANDLING (Deposit Approvals)
-// ==============================================
-client.on("interactionCreate", async interaction => {
-  if (!interaction.isButton()) return;
-  if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild))
-    return interaction.reply({ content: "❌ No permission", flags: MessageFlags.Ephemeral });
-
-  const [action, type, userId] = interaction.customId.split("_");
-  const req = DATA.deposit_requests[userId];
-  if (!req) return interaction.reply({ content: "❌ Request not found", flags: MessageFlags.Ephemeral });
-
-  if (action === "dep" && type === "approve") {
-    ensureUser(userId).balance += req.tokens;
-    delete DATA.deposit_requests[userId];
-    saveData();
-    const user = await client.users.fetch(userId).catch(() => null);
-    if (user) await sendDM(user, "✅ Deposit Approved", `Your ${req.type} deposit was approved! You received **${req.tokens} Tokens**.`);
-    await sendLog("✅ Deposit Approved", `**${req.habbo}** → ${req.tokens} Tokens`, "#2ecc71");
-    return interaction.update({ content: `✅ Approved → ${req.tokens} Tokens given`, embeds: [], components: [] });
-  }
-
-  if (action === "dep" && type === "deny") {
-    delete DATA.deposit_requests[userId];
-    saveData();
-    const user = await client.users.fetch(userId).catch(() => null);
-    if (user) await sendDM(user, "❌ Deposit Denied", `Your ${req.type} deposit was denied. Please check the rules.`);
-    await sendLog("❌ Deposit Denied", `**${req.habbo}** deposit rejected`, "#e74c3c");
-    return interaction.update({ content: `❌ Denied`, embeds: [], components: [] });
   }
 });
 

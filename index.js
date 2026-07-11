@@ -118,7 +118,7 @@ function parsePriceToCredits(priceStr) {
 }
 
 // ==============================================
-// FURNI DATA FETCH — HABBOASSETS FIRST
+// FURNI DETAILS — MEDIUM SIZE ICONS
 // ==============================================
 async function getFurniDetails(furniName) {
   const original = furniName.trim();
@@ -128,7 +128,7 @@ async function getFurniDetails(furniName) {
   let price = "❌ No price data";
   let matchedName = original;
 
-  // 1. HABBOASSETS API (medium size image)
+  // 1. HabboAssets — medium size
   if (CONFIG.habbo_assets_token) {
     try {
       const res = await fetch(`https://www.habboassets.com/api/search?q=${encodeURIComponent(original)}&limit=5`, {
@@ -148,7 +148,7 @@ async function getFurniDetails(furniName) {
     } catch {}
   }
 
-  // 2. HABBOAPI for market price
+  // 2. HabboAPI fallback
   try {
     const headers = { "Accept": "application/json" };
     if (CONFIG.habboapi_key) headers["X-Auth-Key"] = CONFIG.habboapi_key;
@@ -164,13 +164,15 @@ async function getFurniDetails(furniName) {
         if (best) {
           matchedName = best.FurniName;
           if (best.marketData?.averagePrice) price = `${best.marketData.averagePrice}c`;
-          if (iconUrl === CONFIG.default_image) iconUrl = `https://habboapi.site/api/image/${best.ClassName}`;
+          if (iconUrl === CONFIG.default_image) {
+            iconUrl = `https://habboapi.site/api/image/${best.ClassName}?size=m`;
+          }
         }
       }
     }
   } catch {}
 
-  // 3. Fallback price from FurniEye
+  // 3. FurniEye fallback price
   if (price === "❌ No price data") {
     try {
       const res = await fetch(`https://www.furnieye.com/api/search?q=${encodeURIComponent(original)}&limit=5`, { timeout: 3000 });
@@ -280,59 +282,64 @@ async function updateLeaderboard() {
 }
 
 // ==============================================
-// STOCK DISPLAY — IMAGES NEXT TO INFO
+// STOCK DISPLAY — YOUR EXACT LAYOUT
 // ==============================================
-async function buildStockEmbed() {
-  const embed = new EmbedBuilder()
-    .setTitle("🎁 Available Prizes & Stock")
-    .setDescription("**Prices:** Market Average — final value may vary due to tax/fees\n• Updated automatically every 15 minutes")
-    .setColor("#23272A")
-    .setTimestamp();
+async function buildStockEmbeds() {
+  const embeds = [];
 
   for (const group of CONFIG.rarity_groups) {
     const items = STOCK[group.id].filter(i => i.stock > 0);
     const totalStock = items.reduce((sum, item) => sum + item.stock, 0);
 
+    const embed = new EmbedBuilder()
+      .setTitle(group.name)
+      .setColor(group.color)
+      .setDescription("**Prices:** Market Average — final value may vary due to tax/fees")
+      .setTimestamp();
+
     if (totalStock === 0) {
-      embed.addFields({
-        name: group.name,
-        value: "> No items currently in stock",
-        inline: false
-      });
-      continue;
+      embed.addFields({ name: "\u200B", value: "> No items currently in stock", inline: false });
+    } else {
+      // Arrange items in rows of 5
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const details = await getFurniDetails(item.name);
+
+        // Format: Name → Image → Price | Stock
+        embed.addFields({
+          name: `**${details.name}**`,
+          value: `[ ](${details.icon})\nMarket Avg: ${details.price} | Stock: ${item.stock}`,
+          inline: true
+        });
+
+        // Force new row after every 5 items
+        if ((i + 1) % 5 === 0) {
+          embed.addFields({ name: "\u200B", value: "\u200B", inline: true });
+        }
+      }
+
+      embed.setFooter({ text: `Total in category: ${totalStock} items • Updated every 15 mins` });
     }
 
-    let groupContent = "";
-    for (const item of items) {
-      const details = await getFurniDetails(item.name);
-      // Small inline image next to text
-      groupContent += `**${details.name}** ${details.icon ? `[ ](${details.icon})` : ''}\n💰 Market Price: ${details.price} | 📦 In Stock: ${item.stock}\n\n`;
-    }
-
-    groupContent += `**Total in ${group.name.replace("🔵 ", "").replace("🟣 ", "").replace("🟢 ", "").replace("💜 ", "").replace("🟡 ", "")}: ${totalStock} items**`;
-
-    embed.addFields({
-      name: group.name,
-      value: groupContent.trim(),
-      inline: false
-    });
+    embeds.push(embed);
   }
 
-  // REMOVED global thumbnail so no image in corner
-  return embed;
+  return embeds;
 }
 
 async function updateStockDisplay() {
   if (!CONFIG.channels.stock_display) return;
   const ch = await client.channels.fetch(CONFIG.channels.stock_display).catch(() => null);
   if (!ch) return;
-  const embed = await buildStockEmbed();
+
+  const embeds = await buildStockEmbeds();
+
   try {
     if (DATA.stock_display_message_id) {
       const msg = await ch.messages.fetch(DATA.stock_display_message_id).catch(() => null);
-      if (msg) return msg.edit({ embeds: [embed] });
+      if (msg) return msg.edit({ embeds: embeds });
     }
-    const newMsg = await ch.send({ embeds: [embed] });
+    const newMsg = await ch.send({ embeds: embeds });
     DATA.stock_display_message_id = newMsg.id;
     saveData();
   } catch {}
@@ -378,7 +385,7 @@ const client = new Client({
   ]
 });
 
-client.once("clientReady", async () => {
+client.once("ready", async () => {
   console.log(`✅ Gumball Bot online as ${client.user.tag}`);
   console.log(`🔍 Loaded GUILD_ID: "${CONFIG.bot.guild_id}"`);
 
@@ -453,7 +460,6 @@ client.on("interactionCreate", async interaction => {
   try {
     if (interaction.isChatInputCommand()) {
       const isPublic = ["showprizes", "howtoplay", "help", "balance", "gumball", "claim", "depositcoins", "depositfurni"].includes(interaction.commandName);
-      // Add timeout protection
       await Promise.race([
         interaction.deferReply({ flags: isPublic ? 0 : MessageFlags.Ephemeral }),
         new Promise((_, reject) => setTimeout(() => reject(new Error("Defer timeout")), 2500))
@@ -480,8 +486,8 @@ client.on("interactionCreate", async interaction => {
         }
 
         case "showprizes": {
-          const embed = await buildStockEmbed();
-          return interaction.editReply({ embeds: [embed] });
+          const embeds = await buildStockEmbeds();
+          return interaction.editReply({ embeds: embeds });
         }
 
         case "history": {
@@ -618,7 +624,6 @@ client.on("interactionCreate", async interaction => {
           };
           saveData();
 
-          // Win embed: image is large and clear
           const winEmbed = new EmbedBuilder()
             .setTitle("🎉 YOU WON!")
             .setThumbnail(details.icon)
@@ -790,10 +795,7 @@ client.on("interactionCreate", async interaction => {
       }
     }
   } catch (err) {
-    if (err.message === "Defer timeout") {
-      console.log("⚠️ Interaction took too long — skipping to avoid error");
-      return;
-    }
+    if (err.message === "Defer timeout") return;
     console.error("❌ Error:", err);
     if (interaction.deferred) interaction.editReply({ content: "❌ Something went wrong." }).catch(() => {});
   }

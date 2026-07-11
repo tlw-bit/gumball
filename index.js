@@ -56,11 +56,11 @@ function saveData() { fs.writeFileSync(DATA_PATH, JSON.stringify(DATA, null, 2))
 // HELPER: Normalize names for matching
 // ==============================================
 function normalizeName(str) {
-  return str.trim().toLowerCase().replace(/[-_ ]+/g, '');
+  return str.trim().toLowerCase().replace(/[-_ '"]+/g, '');
 }
 
 // ==============================================
-// FURNI LOOKUP — HABBO ASSETS + FURNIEYE PRICING
+// FURNI LOOKUP — FIXED VERSION
 // ==============================================
 async function getFurniDetails(furniName) {
   const originalName = furniName.trim();
@@ -71,16 +71,17 @@ async function getFurniDetails(furniName) {
   let price = "❌ No price data";
   let matchedName = originalName;
 
-  // 1. Get image & verify existence via Habbo Assets first
+  // 1. Habbo Assets with improved search
   if (CONFIG.habbo_assets_token) {
     try {
-      const res = await fetch(`https://habboassets.com/api/search?q=${encodeURIComponent(originalName)}`, {
+      const res = await fetch(`https://habboassets.com/api/search?q=${encodeURIComponent(originalName)}&limit=10`, {
         headers: { Authorization: `Bearer ${CONFIG.habbo_assets_token}` },
-        timeout: 3000
+        timeout: 4000
       });
       if (res.ok) {
         const data = await res.json();
-        const match = data.items?.find(i => normalizeName(i.name) === searchKey);
+        let match = data.items?.find(i => normalizeName(i.name) === searchKey);
+        if (!match) match = data.items?.find(i => normalizeName(i.name).includes(searchKey));
         if (match) {
           iconUrl = match.image_url || match.icon_url;
           matchedName = match.name;
@@ -90,9 +91,9 @@ async function getFurniDetails(furniName) {
     } catch {}
   }
 
-  // 2. Fallback to Habbofurni if not found
+  // 2. Fallback to Habbofurni
   if (!exists) {
-    const safeName = originalName.toLowerCase().replace(/ /g, "_").replace(/'/g, "").replace(/&/g, "and");
+    const safeName = originalName.toLowerCase().replace(/ /g, "_").replace(/'/g, "").replace(/&/g, "and").replace(/-/g, "_");
     try {
       const res = await fetch(`https://habbofurni.com/api/v1/furniture/${safeName}`, { timeout: 3000 });
       if (res.ok) {
@@ -105,12 +106,13 @@ async function getFurniDetails(furniName) {
     } catch {}
   }
 
-  // 3. ALWAYS get average price from FurniEye
+  // 3. Price from FurniEye
   try {
     const res = await fetch(`https://www.furnieye.com/api/search?q=${encodeURIComponent(originalName)}`, { timeout: 3000 });
     if (res.ok) {
       const data = await res.json();
-      const match = data.results?.find(i => normalizeName(i.name) === searchKey) || data.results?.[0];
+      let match = data.results?.find(i => normalizeName(i.name) === searchKey);
+      if (!match) match = data.results?.find(i => normalizeName(i.name).includes(searchKey));
       if (match?.average_price != null) price = `${match.average_price}c`;
     }
   } catch {}
@@ -119,7 +121,7 @@ async function getFurniDetails(furniName) {
 }
 
 // ==============================================
-// STOCK DISPLAY — CLEAR SOURCE LABELS
+// STOCK DISPLAY
 // ==============================================
 async function buildStockEmbed() {
   const embed = new EmbedBuilder()

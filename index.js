@@ -60,7 +60,7 @@ function normalizeName(str) {
 }
 
 // ==============================================
-// FURNI LOOKUP — FIXED VERSION
+// FURNI LOOKUP — MORE FLEXIBLE LOGIC
 // ==============================================
 async function getFurniDetails(furniName) {
   const originalName = furniName.trim();
@@ -71,10 +71,10 @@ async function getFurniDetails(furniName) {
   let price = "❌ No price data";
   let matchedName = originalName;
 
-  // 1. Habbo Assets with improved search
+  // 1. Try Habbo Assets first
   if (CONFIG.habbo_assets_token) {
     try {
-      const res = await fetch(`https://habboassets.com/api/search?q=${encodeURIComponent(originalName)}&limit=10`, {
+      const res = await fetch(`https://habboassets.com/api/search?q=${encodeURIComponent(originalName)}&limit=15`, {
         headers: { Authorization: `Bearer ${CONFIG.habbo_assets_token}` },
         timeout: 4000
       });
@@ -106,14 +106,17 @@ async function getFurniDetails(furniName) {
     } catch {}
   }
 
-  // 3. Price from FurniEye
+  // 3. Get price from FurniEye — if we get a price, treat as "found"
   try {
     const res = await fetch(`https://www.furnieye.com/api/search?q=${encodeURIComponent(originalName)}`, { timeout: 3000 });
     if (res.ok) {
       const data = await res.json();
       let match = data.results?.find(i => normalizeName(i.name) === searchKey);
       if (!match) match = data.results?.find(i => normalizeName(i.name).includes(searchKey));
-      if (match?.average_price != null) price = `${match.average_price}c`;
+      if (match?.average_price != null) {
+        price = `${match.average_price}c`;
+        if (!exists) exists = true; // ✅ Price found = valid item
+      }
     }
   } catch {}
 
@@ -184,11 +187,12 @@ client.once("clientReady", async () => {
     new SlashCommandBuilder().setName("showprizes").setDescription("View live stock, prices and images"),
     new SlashCommandBuilder().setName("addstock").setDescription("Add items to stock")
       .addStringOption(o => o.setName("group").setDescription("blue / purple / green / lilac / golden").setRequired(true))
-      .addStringOption(o => o.setName("name").setDescription("Furni name (case/spacing don't matter)").setRequired(true))
-      .addIntegerOption(o => o.setName("amount").setDescription("Quantity to add").setRequired(true)),
+      .addStringOption(o => o.setName("name").setDescription("Furni name").setRequired(true))
+      .addIntegerOption(o => o.setName("amount").setDescription("Quantity to add").setRequired(true))
+      .addBooleanOption(o => o.setName("force").setDescription("Add even if not found in APIs").setRequired(false)), // ✅ NEW FORCE OPTION
     new SlashCommandBuilder().setName("removestock").setDescription("Remove items from stock")
       .addStringOption(o => o.setName("group").setDescription("blue / purple / green / lilac / golden").setRequired(true))
-      .addStringOption(o => o.setName("name").setDescription("Furni name (case/spacing don't matter)").setRequired(true))
+      .addStringOption(o => o.setName("name").setDescription("Furni name").setRequired(true))
       .addIntegerOption(o => o.setName("amount").setDescription("Quantity to remove").setRequired(true))
   ];
   await guild.commands.set(commands);
@@ -218,13 +222,19 @@ client.on("interactionCreate", async int => {
         const group = int.options.getString("group").toLowerCase();
         const inputName = int.options.getString("name");
         const amount = int.options.getInteger("amount");
+        const force = int.options.getBoolean("force") || false; // ✅ Read force flag
 
         if (!STOCK.hasOwnProperty(group))
           return int.editReply({ content: "❌ Invalid group. Use: blue / purple / green / lilac / golden" });
 
         const details = await getFurniDetails(inputName);
-        if (!details.exists)
-          return int.editReply({ content: `⚠️ **"${inputName}"** could not be found. Check spelling.` });
+
+        // ✅ Allow adding if force = true OR item was found
+        if (!details.exists && !force) {
+          return int.editReply({ 
+            content: `⚠️ **"${inputName}"** could not be found.\nUse \`force: true\` to add it anyway.` 
+          });
+        }
 
         const searchKey = normalizeName(details.name);
         const existing = STOCK[group].find(i => normalizeName(i.name) === searchKey);
@@ -238,7 +248,7 @@ client.on("interactionCreate", async int => {
         saveStock();
         await updateStockDisplay();
         return int.editReply({
-          content: `✅ Added **${amount}x ${details.name}**\n💰 Price: ${details.price}`
+          content: `✅ Added **${amount}x ${details.name}**\n💰 Price: ${details.price}\n${force ? "⚠️ Added manually (no API match)" : ""}`
         });
       }
 

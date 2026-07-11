@@ -118,7 +118,7 @@ function parsePriceToCredits(priceStr) {
 }
 
 // ==============================================
-// FURNI DETAILS — MEDIUM SIZE ICONS
+// FURNI DETAILS — FIXED IMAGE URLs
 // ==============================================
 async function getFurniDetails(furniName) {
   const original = furniName.trim();
@@ -128,7 +128,7 @@ async function getFurniDetails(furniName) {
   let price = "❌ No price data";
   let matchedName = original;
 
-  // 1. HabboAssets — medium size
+  // 1. HabboAssets — direct medium size URL
   if (CONFIG.habbo_assets_token) {
     try {
       const res = await fetch(`https://www.habboassets.com/api/search?q=${encodeURIComponent(original)}&limit=5`, {
@@ -141,6 +141,7 @@ async function getFurniDetails(furniName) {
           const best = data.items.find(i => normalizeName(i.name) === searchKey) || data.items[0];
           if (best) {
             matchedName = best.name;
+            // Ensure we get a direct image URL
             iconUrl = best.medium_url || best.image_url || best.icon_url || CONFIG.default_image;
           }
         }
@@ -148,7 +149,7 @@ async function getFurniDetails(furniName) {
     } catch {}
   }
 
-  // 2. HabboAPI fallback
+  // 2. HabboAPI fallback — direct image URL
   try {
     const headers = { "Accept": "application/json" };
     if (CONFIG.habboapi_key) headers["X-Auth-Key"] = CONFIG.habboapi_key;
@@ -165,7 +166,8 @@ async function getFurniDetails(furniName) {
           matchedName = best.FurniName;
           if (best.marketData?.averagePrice) price = `${best.marketData.averagePrice}c`;
           if (iconUrl === CONFIG.default_image) {
-            iconUrl = `https://habboapi.site/api/image/${best.ClassName}?size=m`;
+            // Use direct image endpoint
+            iconUrl = `https://images.habboapi.site/furni/${best.ClassName}.png`;
           }
         }
       }
